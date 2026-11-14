@@ -201,6 +201,7 @@ static void test_lidar() {
     CHECK(g.w == 3 && g.h == 2 && g.cells.size() == 6 && g.cells[2] == 100 && g.cells[5] == 55);
     CHECK_NEAR(g.ox, -15.0, 1e-12);
     CHECK(g.x0 == 0 && g.x1 == 2 && g.y0 == 0 && g.y1 == 1);
+    CHECK(cell_at(g, -15.0 + 0.11, -15.0 + 0.01) == 100 && cell_at(g, -15.0 + 0.01, -15.0 + 0.06) == 0 && cell_at(g, 0, 0) == -2);
     CHECK(!parse_occupancy_grid(R"({"msg":{"info":{"width":3,"height":3,"resolution":0.05},"data":[0,0]}})", g));  // 크기 불일치
     CHECK_NEAR(yaw_from_quaternion(0, 0, std::sin(0.6), std::cos(0.6)), 1.2, 1e-9);
     Pose2D pose{1.0, 2.0, 3.14159265358979 / 2};
@@ -267,6 +268,21 @@ static void test_planner() {
     CHECK(path_blocked_by({{1.0, 0.05}}, {0, 0}, {{2, 0}}, 0, 0.2, 1.5, &hits) && hits.size() == 1);
     CHECK(!path_blocked_by({{1.0, 0.5}}, {0, 0}, {{2, 0}}, 0, 0.2, 1.5));
     CHECK(!path_blocked_by({{1.8, 0.0}}, {0, 0}, {{2, 0}}, 0, 0.2, 1.5));  // 앞쪽 1.5 m 밖
+    // 8) 막힘 판정: 4번 중 3번, 재계획 뒤 1.5 s 쿨다운, 한 번 튄 값은 무시
+    BlockTrigger t;
+    CHECK(!t.push(true, 10.0) && !t.push(false, 10.1) && !t.push(true, 10.2));
+    CHECK(t.push(true, 10.3));           // 4번 중 3번
+    t.replanned(10.3);
+    CHECK(!t.push(true, 10.4) && !t.push(true, 10.5) && !t.push(true, 10.6));  // 쿨다운 중
+    CHECK(t.push(true, 11.9));           // 쿨다운 끝, 여전히 막힘
+    t.reset();
+    CHECK(!t.push(true, 20) && !t.push(false, 20.1) && !t.push(false, 20.2) && !t.push(true, 20.3) && !t.push(false, 20.4));
+    // 9) 남은 사용자 경유점: 로봇이 index 번째 점으로 가는 중
+    std::vector<Pt> goals{{1, 0}, {2, 0}, {3, 0}};
+    std::vector<int> at{0, 2, 4};
+    CHECK(remaining_goals(goals, at, 0).size() == 3);
+    CHECK(remaining_goals(goals, at, 1).size() == 2 && remaining_goals(goals, at, 1)[0].first == 2);
+    CHECK(remaining_goals(goals, at, 5).size() == 1 && remaining_goals(goals, at, 5)[0].first == 3);  // 끝 무렵
 }
 
 int main() {

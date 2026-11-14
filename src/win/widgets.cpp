@@ -45,13 +45,6 @@ void shadow(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r) {
     dl->AddRectFilled(ImVec2(p0.x - 1 * s, p0.y + 6 * s), ImVec2(p1.x + 1 * s, p1.y + 6 * s), IM_COL32(0, 0, 0, 40), r);
 }
 
-void card(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r) {
-    r *= g_s;
-    shadow(dl, p0, p1, r);
-    dl->AddRectFilled(p0, p1, T.bg1, r);
-    dl->AddRect(p0, p1, T.line, r, 1.0f);
-}
-
 void text_shadowed(ImDrawList* dl, ImFont* f, float size, ImVec2 pos, ImU32 col, const char* txt) {
     if (!f) f = F.body;
     dl->AddText(f, px(size), ImVec2(pos.x + g_s, pos.y + g_s), IM_COL32(0, 0, 0, 160), txt);
@@ -101,132 +94,6 @@ void pad_glyph(ImDrawList* dl, Pad p, ImVec2 c, float size) {
             break;
         }
     }
-}
-
-float chip_width(float h, const char* icon, const char* text, ImFont* f) {
-    float s = g_s, pad = 10 * s;
-    float w = 2 * pad + text_size(f ? f : F.semi, sz::label, text).x;
-    if (icon && *icon) w += text_size(F.body, sz::label, icon).x + 6 * s;
-    (void)h;
-    return w;
-}
-
-float chip(ImDrawList* dl, ImVec2 pos, float h, const char* icon, const char* text, Tone t, bool filled, ImFont* f) {
-    float s = g_s, pad = 10 * s;
-    if (!f) f = F.semi;
-    ImU32 col = tone_color(t);
-    float w = chip_width(h, icon, text, f);
-    ImVec2 p1(pos.x + w, pos.y + h);
-    if (filled) {
-        dl->AddRectFilled(pos, p1, col, h / 2);
-    } else {
-        dl->AddRectFilled(pos, p1, T.bg2, h / 2);
-        dl->AddRect(pos, p1, col, h / 2, 1.5f * s);
-    }
-    ImU32 fg = filled ? T.ink : (t == Tone::Neutral ? T.text1 : col);
-    float x = pos.x + pad;
-    if (icon && *icon) {
-        ImVec2 is = text_size(F.body, sz::label, icon);
-        dl->AddText(F.body, px(sz::label), ImVec2(x, pos.y + (h - is.y) / 2), fg, icon);
-        x += is.x + 6 * s;
-    }
-    ImVec2 ts = text_size(f, sz::label, text);
-    dl->AddText(f, px(sz::label), ImVec2(x, pos.y + (h - ts.y) / 2), fg, text);
-    return w;
-}
-
-bool icon_button(const char* id, const char* icon, const char* label, ImVec2 size, Tone t, const Pad* hint, bool enabled,
-                 bool selected, bool vertical) {
-    float s = g_s;
-    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + size.x, p0.y + size.y);
-    ImGui::InvisibleButton(id, size);
-    bool hovered = enabled && ImGui::IsItemHovered(), active = enabled && ImGui::IsItemActive();
-    bool clicked = enabled && ImGui::IsItemClicked();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    float r = 10 * s;
-    ImU32 face_top = T.bg3, face_bot = T.bg2;
-    if (t == Tone::Accent || t == Tone::Ok || t == Tone::Warn || t == Tone::Danger || t == Tone::Info) {
-        face_top = theme::shade(tone_color(t), 1.0f);
-        face_bot = theme::shade(tone_color(t), 0.82f);
-    }
-    if (!enabled) face_top = face_bot = T.bg1;
-    if (hovered) face_top = theme::shade(face_top, 1.06f), face_bot = theme::shade(face_bot, 1.06f);
-    if (active) face_top = face_bot = theme::shade(face_bot, 0.92f);
-    if (enabled) shadow(dl, p0, p1, r);
-    int v0 = dl->VtxBuffer.Size;
-    dl->AddRectFilled(p0, p1, face_top, r);
-    ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl, v0, dl->VtxBuffer.Size, p0, ImVec2(p0.x, p1.y), face_top, face_bot);
-    if (enabled) dl->AddLine(ImVec2(p0.x + r, p0.y + 1), ImVec2(p1.x - r, p0.y + 1), IM_COL32(255, 255, 255, 18));
-    bool filled_tone = enabled && t != Tone::Neutral && t != Tone::Muted;
-    ImU32 fg = !enabled ? T.text3 : (filled_tone ? T.ink : (selected ? T.text1 : T.text1));
-    ImU32 icon_col = !enabled ? T.text3 : (filled_tone ? T.ink : (selected ? T.accent : T.text2));
-    if (selected) {
-        dl->AddRect(p0, p1, T.accent, r, 2.5f * s);
-        if (vertical) dl->AddRectFilled(ImVec2(p0.x, p0.y + 10 * s), ImVec2(p0.x + 4 * s, p1.y - 10 * s), T.accent, 2 * s);
-    }
-    if (vertical) {
-        ImVec2 is = text_size(F.body, sz::icon_lg, icon), ls = text_size(F.semi, sz::label, label);
-        float total = is.y + 2 * s + ls.y, y = p0.y + (size.y - total) / 2;
-        dl->AddText(F.body, px(sz::icon_lg), ImVec2(p0.x + (size.x - is.x) / 2, y), icon_col, icon);
-        dl->AddText(F.semi, px(sz::label), ImVec2(p0.x + (size.x - ls.x) / 2, y + is.y + 2 * s), fg, label);
-    } else {
-        float x = p0.x + 14 * s;
-        if (icon && *icon) {
-            ImVec2 is = text_size(F.body, sz::icon, icon);
-            dl->AddText(F.body, px(sz::icon), ImVec2(x, p0.y + (size.y - is.y) / 2), icon_col, icon);
-            x += is.x + 10 * s;
-        }
-        float right = p1.x - (hint ? 34 * s : 12 * s);
-        float fs = size.x < 150 * s ? sz::label : sz::button;  // 레일처럼 좁은 버튼은 라벨을 한 단계 작게
-        ImVec2 ls = text_size(F.semi, fs, label);
-        ImVec4 clip(x, p0.y, right, p1.y);
-        dl->AddText(F.semi, px(fs), ImVec2(x, p0.y + (size.y - ls.y) / 2), fg, label, nullptr, 0.0f, &clip);
-        if (hint) pad_glyph(dl, *hint, ImVec2(p1.x - 18 * s, p0.y + size.y / 2), 20);
-    }
-    return clicked;
-}
-
-bool segmented(const char* id, const char* const* items, int n, int* index, ImVec2 size) {
-    float s = g_s;
-    ImVec2 p0 = ImGui::GetCursorScreenPos();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    float h = size.y, seg = size.x / n;
-    dl->AddRectFilled(p0, ImVec2(p0.x + size.x, p0.y + h), T.bg1, h / 2);
-    dl->AddRect(p0, ImVec2(p0.x + size.x, p0.y + h), T.line, h / 2, 1.0f);
-    bool changed = false;
-    ImGui::PushID(id);
-    for (int i = 0; i < n; ++i) {
-        ImGui::SetCursorScreenPos(ImVec2(p0.x + seg * i, p0.y));
-        ImGui::PushID(i);
-        if (ImGui::InvisibleButton("seg", ImVec2(seg, h)) && *index != i) {
-            *index = i;
-            changed = true;
-        }
-        ImGui::PopID();
-        ImVec2 a(p0.x + seg * i + 3 * s, p0.y + 3 * s), b(p0.x + seg * (i + 1) - 3 * s, p0.y + h - 3 * s);
-        if (*index == i) dl->AddRectFilled(a, b, T.accent, (h - 6 * s) / 2);
-        ImVec2 ts = text_size(F.semi, sz::label, items[i]);
-        dl->AddText(F.semi, px(sz::label), ImVec2((a.x + b.x - ts.x) / 2, p0.y + (h - ts.y) / 2), *index == i ? T.ink : T.text2,
-                    items[i]);
-    }
-    ImGui::PopID();
-    ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + h));
-    ImGui::Dummy(ImVec2(size.x, 0));
-    return changed;
-}
-
-bool toggle(const char* id, const char* label, bool* v) {
-    float s = g_s, h = 32 * s, w = 56 * s;
-    ImVec2 p0 = ImGui::GetCursorScreenPos();
-    ImVec2 ls = text_size(F.body, sz::body, label);
-    bool clicked = ImGui::InvisibleButton(id, ImVec2(w + 14 * s + ls.x, std::max(h, ls.y)));
-    if (clicked) *v = !*v;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), *v ? T.accent : T.bg3, h / 2);
-    float kx = *v ? p0.x + w - h / 2 : p0.x + h / 2;
-    dl->AddCircleFilled(ImVec2(kx, p0.y + h / 2), h / 2 - 4 * s, *v ? T.ink : T.text2);
-    dl->AddText(F.body, px(sz::body), ImVec2(p0.x + w + 14 * s, p0.y + (h - ls.y) / 2), T.text1, label);
-    return clicked;
 }
 
 bool estop(const char* id, ImVec2 size, bool engaged, bool connected, float hold_k, bool* holding, double now) {
@@ -281,41 +148,6 @@ bool estop(const char* id, ImVec2 size, bool engaged, bool connected, float hold
     return false;
 }
 
-void drive_capsule(ImDrawList* dl, ImVec2 pos, ImVec2 size, Tone t, bool filled, const char* lamp, const char* text) {
-    float s = g_s, h = size.y;
-    ImU32 col = tone_color(t);
-    ImVec2 p1(pos.x + size.x, pos.y + h);
-    if (filled) {
-        dl->AddRectFilled(pos, p1, col, h / 2);
-    } else {
-        dl->AddRectFilled(pos, p1, theme::alpha(T.bg0, 0.75f), h / 2);
-        dl->AddRect(pos, p1, col, h / 2, 2.0f * s);
-    }
-    ImU32 fg = filled ? (t == Tone::Danger ? IM_COL32_WHITE : T.ink) : T.text1;
-    ImU32 lamp_col = filled ? fg : col;
-    float x = pos.x + h * 0.45f;
-    ImVec2 ls = text_size(F.bold, sz::button, lamp);
-    dl->AddText(F.bold, px(sz::button), ImVec2(x, pos.y + (h - ls.y) / 2), lamp_col, lamp);
-    x += ls.x + 10 * s;
-    ImVec2 ts = text_size(F.bold, sz::button, text);
-    ImVec4 clip(x, pos.y, p1.x - h * 0.4f, p1.y);
-    dl->AddText(F.bold, px(sz::button), ImVec2(x, pos.y + (h - ts.y) / 2), fg, text, nullptr, 0.0f, &clip);
-}
-
-void cmd_bar(ImDrawList* dl, ImVec2 pos, float w, const char* name, double v, bool active) {
-    float s = g_s;
-    ImVec2 ns = text_size(F.semi, sz::label, name);
-    text_shadowed(dl, F.semi, sz::label, ImVec2(pos.x, pos.y), T.text2, name);
-    float x0 = pos.x + 52 * s, tw = w - 52 * s - 64 * s, cy = pos.y + ns.y / 2, mid = x0 + tw / 2;
-    dl->AddRectFilled(ImVec2(x0, cy - 3 * s), ImVec2(x0 + tw, cy + 3 * s), T.bg3, 3 * s);
-    float e = mid + static_cast<float>(std::clamp(v, -1.0, 1.0)) * tw / 2;
-    dl->AddRectFilled(ImVec2(std::min(mid, e), cy - 3 * s), ImVec2(std::max(mid, e), cy + 3 * s), active ? T.ok : T.text3, 3 * s);
-    dl->AddLine(ImVec2(mid, cy - 8 * s), ImVec2(mid, cy + 8 * s), T.text2, 2 * s);
-    char buf[16];
-    std::snprintf(buf, sizeof buf, "%+.2f", v);
-    text_shadowed(dl, F.num, sz::num_sm, ImVec2(x0 + tw + 10 * s, pos.y), active ? T.text1 : T.text3, buf);
-}
-
 void toast(ImDrawList* dl, ImVec2 c, const char* text, Tone t, float alpha, float rise) {
     float s = g_s, h = 44 * s;
     ImVec2 ts = text_size(F.semi, sz::body, text);
@@ -340,58 +172,12 @@ void empty_state(ImDrawList* dl, ImVec2 c, const char* icon, const char* title, 
     dl->AddText(F.body, px(sz::label), ImVec2(c.x - hs.x / 2, y), T.text3, hint);
 }
 
-void stat_tile(const char* id, const char* label, const char* big, const char* small, ImVec2 size, Tone t) {
-    float s = g_s;
-    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + size.x, p0.y + size.y);
-    ImGui::Dummy(size);
-    (void)id;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    card(dl, p0, p1, 12);
-    dl->AddText(F.semi, px(sz::label), ImVec2(p0.x + 16 * s, p0.y + 12 * s), T.text2, label);
-    dl->AddText(F.num, px(sz::num_lg), ImVec2(p0.x + 16 * s, p0.y + 36 * s), t == Tone::Neutral ? T.text1 : tone_color(t), big);
-    dl->AddText(F.num, px(sz::num_sm), ImVec2(p0.x + 16 * s, p1.y - 28 * s), T.text2, small);
-}
-
-void area_plot(const char* id, const float* v, int n, float vmax, float threshold, ImVec2 size) {
-    float s = g_s;
-    ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + size.x, p0.y + size.y);
-    ImGui::Dummy(size);
-    (void)id;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    card(dl, p0, p1, 12);
-    if (n <= 0) return;
-    float l = p0.x + 12 * s, r = p1.x - 12 * s, top = p0.y + 34 * s, bot = p1.y - 12 * s;
-    int bars = std::max(1, std::min(n, static_cast<int>((r - l) / (3 * s))));
-    float bw = (r - l) / bars;
-    float prevx = -1, prevy = 0;
-    for (int b = 0; b < bars; ++b) {
-        int i0 = b * n / bars, i1 = std::max(i0 + 1, (b + 1) * n / bars);
-        float sum = 0;
-        for (int i = i0; i < i1; ++i) sum += v[i];
-        float avg = sum / (i1 - i0), k = std::min(1.0f, avg / vmax);
-        float x = l + b * bw, y = bot - k * (bot - top);
-        dl->AddRectFilled(ImVec2(x, y), ImVec2(x + bw - 1 * s, bot), theme::alpha(T.info, 0.24f));
-        if (prevx >= 0) dl->AddLine(ImVec2(prevx, prevy), ImVec2(x + bw / 2, y), avg > threshold ? T.warn : T.info, 2 * s);
-        prevx = x + bw / 2;
-        prevy = y;
-    }
-    if (threshold < vmax) {  // 임계선(점선)
-        float ty = bot - threshold / vmax * (bot - top);
-        for (float x = l; x < r; x += 10 * s) dl->AddLine(ImVec2(x, ty), ImVec2(std::min(r, x + 6 * s), ty), theme::alpha(T.warn, 0.7f), 1.0f);
-    }
-}
-
-
-// ---------------- v2 ----------------
-
 void glass_panel(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r) {
     float s = g_s;
     dl->AddRectFilled(ImVec2(p0.x, p0.y + 4 * s), ImVec2(p1.x, p1.y + 4 * s), IM_COL32(0, 0, 0, 70), r);
     dl->AddRectFilled(p0, p1, T.glass, r);
     dl->AddRect(ImVec2(p0.x + 0.5f, p0.y + 0.5f), ImVec2(p1.x - 0.5f, p1.y - 0.5f), T.glass_hi, r, 1.0f);
 }
-
-void plate(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r) { dl->AddRectFilled(p0, p1, T.bg1, r); }
 
 void scrim(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float a_top, float a_bottom, ImU32 base) {
     if (!base) base = T.bg0;
@@ -500,7 +286,7 @@ bool fab(const char* id, const char* icon, float size, const Pad* hint, bool sel
     return clicked;
 }
 
-bool segmented2(const char* id, const char* const* items, int n, int* index, float h, const char* const* icons) {
+bool segmented(const char* id, const char* const* items, int n, int* index, float h, const char* const* icons) {
     float s = g_s, pad = 16 * s;
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     std::vector<float> ws(static_cast<size_t>(n));
@@ -546,7 +332,7 @@ bool segmented2(const char* id, const char* const* items, int n, int* index, flo
     return changed;
 }
 
-bool toggle2(const char* id, const char* label, bool* v, float width) {
+bool toggle(const char* id, const char* label, bool* v, float width) {
     float s = g_s, h = 56 * s, tw = 48 * s, th = 28 * s;
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     bool clicked = ImGui::InvisibleButton(id, ImVec2(width, h));
@@ -561,7 +347,7 @@ bool toggle2(const char* id, const char* label, bool* v, float width) {
     return clicked;
 }
 
-bool slider2(const char* id, const char* label, float* v, float lo, float hi, const char* fmt_s, float width) {
+bool slider(const char* id, const char* label, float* v, float lo, float hi, const char* fmt_s, float width) {
     float s = g_s, h = 64 * s;
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -592,12 +378,12 @@ bool slider2(const char* id, const char* label, float* v, float lo, float hi, co
     return changed;
 }
 
-float capsule2_width(float h, float min_w, const char* text) {
+float capsule_width(float h, float min_w, const char* text) {
     return std::max(min_w, text_size(F.bold, sz::headline, text).x + h * 1.6f);
 }
 
-float capsule2(ImDrawList* dl, ImVec2 pos, float h, float min_w, Tone t, bool filled, Lamp lamp, const char* text) {
-    float s = g_s, w = capsule2_width(h, min_w, text);
+float capsule(ImDrawList* dl, ImVec2 pos, float h, float min_w, Tone t, bool filled, Lamp lamp, const char* text) {
+    float s = g_s, w = capsule_width(h, min_w, text);
     ImU32 col = tone_color(t);
     ImVec2 p1(pos.x + w, pos.y + h);
     if (filled) {

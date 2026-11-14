@@ -73,6 +73,7 @@ bool Settings::load(const std::string& path) {
         max_speed = static_cast<float>(j["max_speed"].as_number(max_speed));
         deadzone = static_cast<float>(j["deadzone"].as_number(deadzone));
         camera = j["camera"].as_bool(camera);
+        camera_fill = j["camera_fill"].as_bool(camera_fill);
         sniff = j["sniff"].as_bool(sniff);
     } catch (const std::exception&) {
         return false;
@@ -87,7 +88,7 @@ bool Settings::save(const std::string& path) const {
     j.set("last_host", last_host).set("single_stick", single_stick).set("tilt_enabled", tilt_enabled);
     j.set("tilt_invert_forward", tilt_invert_forward).set("tilt_invert_turn", tilt_invert_turn);
     j.set("max_speed", static_cast<double>(max_speed)).set("deadzone", static_cast<double>(deadzone));
-    j.set("camera", camera).set("sniff", sniff);
+    j.set("camera", camera).set("camera_fill", camera_fill).set("sniff", sniff);
     std::ofstream f(path);
     if (!f) return false;
     f << j.dump() << "\n";
@@ -118,6 +119,22 @@ App::~App() {
     tilt_.stop();
     robot_.disconnect();  // 중립 + disconnect
     save_settings();
+}
+
+void App::set_cpu_ms(double ms, double now) {
+    cpu_ms_avg_ = cpu_ms_avg_ <= 0 ? ms : cpu_ms_avg_ * 0.97 + ms * 0.03;
+    cpu_max_run_ = std::max(cpu_max_run_, ms);
+    if (now - cpu_max_since_ > 2.0) {  // 2 초마다 최대값을 새로 시작
+        cpu_ms_max_ = cpu_max_run_;
+        cpu_max_run_ = 0;
+        cpu_max_since_ = now;
+    }
+}
+
+std::string App::perf_line() const {
+    static const char* names[] = {"drive", "map", "robot", "log", "connect"};
+    return fmt("perf screen=%s cpu_avg=%.2fms cpu_max2s=%.2fms fps=%.0f", names[static_cast<int>(screen_)], cpu_ms_avg_, cpu_ms_max_,
+               ImGui::GetIO().Framerate);
 }
 
 void App::save_settings() { cfg_.save(exe_dir_ + "\\config.json"); }

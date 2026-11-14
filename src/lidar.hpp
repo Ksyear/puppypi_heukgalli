@@ -17,6 +17,9 @@ struct OccGrid {
     bool valid() const { return w > 0 && h > 0 && res > 0 && cells.size() == static_cast<size_t>(w) * h; }
 };
 
+// (x, y) m 의 칸 값. 격자 밖이면 -2
+int cell_at(const OccGrid& g, double x, double y);
+
 // rosbridge 가 보낸 /map 메시지(JSON 전체 문자열)에서 격자를 읽는다. 큰 data 배열은 일반 JSON 해석기를 거치지 않고 직접 읽는다.
 bool parse_occupancy_grid(const std::string& message_json, OccGrid& out);
 

@@ -22,6 +22,13 @@ bool parse_pose_stamped(const Json& msg, Pose2D& out) {
     return std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.yaw);
 }
 
+int cell_at(const OccGrid& g, double x, double y) {
+    if (!g.valid()) return -2;
+    int cx = static_cast<int>(std::floor((x - g.ox) / g.res)), cy = static_cast<int>(std::floor((y - g.oy) / g.res));
+    if (cx < 0 || cy < 0 || cx >= g.w || cy >= g.h) return -2;
+    return g.cells[static_cast<size_t>(cy) * g.w + cx];
+}
+
 bool parse_occupancy_grid(const std::string& text, OccGrid& out) {
     // 1) "data":[ ... ] 를 찾아 정수를 직접 읽는다(600×600 = 36만 개)
     size_t key = text.find("\"data\"");

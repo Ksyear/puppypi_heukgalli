@@ -297,4 +297,24 @@ bool path_blocked_by(const std::vector<Pt>& obstacles, const Pt& start, const st
     return any;
 }
 
+int BlockTrigger::count() const {
+    int c = 0;
+    for (bool h : hits_) c += h ? 1 : 0;
+    return c;
+}
+
+bool BlockTrigger::push(bool hit, double now) {
+    hits_.push_back(hit);
+    if (static_cast<int>(hits_.size()) > window_) hits_.erase(hits_.begin());
+    return count() >= need_ && now - last_ >= cooldown_;
+}
+
+std::vector<Pt> remaining_goals(const std::vector<Pt>& goals, const std::vector<int>& goal_at, int index) {
+    std::vector<Pt> out;
+    for (size_t i = 0; i < goals.size(); ++i)
+        if (i >= goal_at.size() || goal_at[i] >= index) out.push_back(goals[i]);
+    if (out.empty() && !goals.empty()) out.push_back(goals.back());  // 끝 무렵이면 마지막 목표만
+    return out;
+}
+
 }  // namespace hg

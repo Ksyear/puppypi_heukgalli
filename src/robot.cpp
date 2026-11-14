@@ -544,8 +544,7 @@ bool Robot::go_path(const std::vector<Pt>& waypoints, std::string* err) {
     nav_.planned = r.path;
     nav_goal_at_ = r.goal_at;
     nav_seq_ = seq;
-    nav_hits_.clear();
-    nav_last_replan_ = now_s();
+    nav_trigger_.replanned(now_s());
     return true;
 }
 
@@ -646,7 +645,7 @@ void Robot::nav_loop() {
                     nav_.message = fmt("장애물을 피해 다시 가는 중(%d번째 우회)", nav_.replans);
                     nav_.planned = next;
                     nav_seq_ = nseq;
-                    nav_hits_.clear();
+                    nav_trigger_.reset();
                     events_.add(fmt("우회 경로 전송 %zu점 (sequence %lld)", next.size(), static_cast<long long>(nseq)));
                 }
             } else if (now - nav_pending_since_ > 3.0) {
@@ -658,21 +657,16 @@ void Robot::nav_loop() {
         int index = ours ? std::max(0, s.path.index) : 0;
         std::vector<Pt> hits;
         bool hit = path_blocked_by(obs, here, planned, static_cast<size_t>(index), plan_config.inflate - 0.03, lookahead, &hits);
-        int count;
+        bool fire;
         {
             std::lock_guard<std::mutex> lk(mu_);
-            nav_hits_.push_back(hit);
-            while (nav_hits_.size() > 4) nav_hits_.pop_front();
-            count = static_cast<int>(std::count(nav_hits_.begin(), nav_hits_.end(), true));
+            fire = nav_trigger_.push(hit, now);  // 스캔 4번 중 3번, 직전 재계획 뒤 1.5 s
         }
-        if (count < 3 || now - nav_last_replan_ < 1.5) continue;
+        if (!fire) continue;
         // 막힘 확정 → 멈추고 다시 계획
         nav_own_cancel_until_ = now + 2.0;
         v2_.cancel_path();
-        std::vector<Pt> remaining;
-        for (size_t i = 0; i < goals.size(); ++i)
-            if (i >= goal_at.size() || goal_at[i] >= index) remaining.push_back(goals[i]);
-        if (remaining.empty()) remaining.push_back(goals.back());
+        std::vector<Pt> remaining = remaining_goals(goals, goal_at, index);
         {
             std::lock_guard<std::mutex> lk(mu_);
             for (const auto& h : hits) nav_temp_.emplace_back(h, now + 20.0);  // 막힌 점은 20 초 기억
@@ -685,7 +679,7 @@ void Robot::nav_loop() {
         }
         PlanResult r = plan_path(g.get(), obs, here, remaining, plan_config);
         std::lock_guard<std::mutex> lk(mu_);
-        nav_last_replan_ = now;
+        nav_trigger_.replanned(now);
         nav_.obstacles.clear();
         for (const auto& h : hits) nav_.obstacles.push_back(h);
         if (!r.ok) {

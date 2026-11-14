@@ -33,6 +33,7 @@ struct Settings {
     float max_speed = 0.6f;      // 로봇 상한(전진 25 cm/s, 회전 0.28 rad/s)에 곱하는 비율
     float deadzone = 0.12f;
     bool camera = true;
+    bool camera_fill = false;    // 카메라를 화면에 꽉 채움(가장자리 잘림)
     bool sniff = false;
     bool load(const std::string& path);
     bool save(const std::string& path) const;
@@ -51,7 +52,10 @@ public:
     bool select_screen(const std::string& name);
     LogRing& events() { return robot_.events(); }
     void set_keyboard_drive(bool on) { kbdrive_ = on; }
-    void set_privacy(bool on) { privacy_ = on; }  // 화면에 IP 를 보이지 않음(녹화·스크린샷용)
+    void set_privacy(bool on) { privacy_ = on; }
+    // 한 프레임의 CPU 시간(입력 처리 + 그리기 명령 생성 + 제출). 최근 평균과 최근 2 초 최대
+    void set_cpu_ms(double ms, double now);
+    std::string perf_line() const;  // 측정 기록용 한 줄(화면 이름, CPU 평균·최대, fps)  // 화면에 IP 를 보이지 않음(녹화·스크린샷용)
 
 private:
     // 입력·안전
@@ -122,6 +126,11 @@ private:
     double map_cx_ = 0, map_cy_ = 0, map_ppm_ = 0;  // 보기 중심(m), 배율(px/m)
     Texture grid_tex_;
     uint64_t grid_tex_version_ = 0;
+    std::future<std::vector<uint8_t>> grid_job_;   // 지도 텍스처 합성(작업 스레드)
+    uint64_t grid_job_version_ = 0;
+    std::shared_ptr<const OccGrid> grid_job_grid_, grid_shown_;
+    std::vector<std::string> local_ips_;
+    double local_ips_at_ = 0;
     Texture sprite_tex_;          // 스캔 점용 방사형 점(32×32)
     double map_ppm_target_ = 0;   // 확대 단계(보간 목표)
     // v2 화면 상태
@@ -137,6 +146,7 @@ private:
     double toast_start_ = 0;
     bool kbdrive_ = false;
     bool privacy_ = false;
+    double cpu_ms_avg_ = 0, cpu_ms_max_ = 0, cpu_max_since_ = 0, cpu_max_run_ = 0;
     std::string masked(const std::string& line) const;  // 패드 없을 때 키보드 운전(--kbdrive, Shift 를 쥔 동안만)
     // 연결 화면
     std::future<std::vector<FoundRobot>> discovering_;

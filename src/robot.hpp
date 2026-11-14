@@ -175,8 +175,8 @@ private:
     NavStatus nav_;
     std::vector<int> nav_goal_at_;
     int64_t nav_seq_ = -1;
-    double nav_own_cancel_until_ = 0, nav_last_replan_ = 0, nav_last_scan_ = 0;
-    std::deque<bool> nav_hits_;
+    double nav_own_cancel_until_ = 0, nav_last_scan_ = 0;
+    BlockTrigger nav_trigger_;
     std::vector<std::pair<Pt, double>> nav_temp_;  // (점, 만료 시각)
     bool nav_pending_send_ = false;
     std::vector<Pt> nav_pending_path_;

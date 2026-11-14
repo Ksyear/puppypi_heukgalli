@@ -269,6 +269,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
         double next_request_check = 0;
         bool shot_pending = false, shot_after_switch = false;
         uint64_t event_cursor = 0;
+        double next_perf_log = 0;
         while (!done && !app.quit_requested()) {
             MSG msg;
             while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -300,15 +301,21 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
                 g_resize_w = g_resize_h = 0;
                 create_rtv();
             }
+            double t0 = hg::now_s();
             ImGui_ImplDX11_NewFrame();
             ImGui_ImplWin32_NewFrame();
             ImGui::NewFrame();
-            app.frame(hg::now_s());
+            app.frame(t0);
             ImGui::Render();
             const float clear[4] = {0.03f, 0.03f, 0.04f, 1.0f};
             g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
             g_ctx->ClearRenderTargetView(g_rtv, clear);
             ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+            app.set_cpu_ms((hg::now_s() - t0) * 1000.0, t0);  // vsync 대기(Present) 전까지의 CPU 시간
+            if (t0 >= next_perf_log) {  // 5 초마다 성능 한 줄(docs/MEASUREMENTS.md 근거)
+                next_perf_log = t0 + 5.0;
+                logf(app.perf_line());
+            }
             for (const auto& line : app.events().since(event_cursor)) logf("이벤트 " + line.substr(13));  // 앞의 시각 13자 제외
             if (hg::now_s() >= next_request_check) {
                 next_request_check = hg::now_s() + 1.0;

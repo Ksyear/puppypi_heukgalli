@@ -11,6 +11,7 @@ expect nav done 90
 expect http /mock/pose "collided": false
 # 2) 가는 도중 경로 위에 새 장애물: 스캔으로 찾아 다시 계획한다
 http /mock/obstacles/clear
+wait 0.5
 go 0.2,0.2
 expect nav done 90
 go 3.0,0.2

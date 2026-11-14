@@ -59,4 +59,22 @@ PlanResult plan_path(const OccGrid* grid, const std::vector<Pt>& obstacles, cons
 bool path_blocked_by(const std::vector<Pt>& obstacles, const Pt& start, const std::vector<Pt>& path, size_t from, double radius,
                      double lookahead, std::vector<Pt>* hits = nullptr);
 
+// 가는 중 막힘 판정: 최근 window 번 스캔 중 need 번 이상 막히면(그리고 직전 재계획 뒤 cooldown 이 지났으면) 재계획
+class BlockTrigger {
+public:
+    explicit BlockTrigger(int window = 4, int need = 3, double cooldown = 1.5) : window_(window), need_(need), cooldown_(cooldown) {}
+    bool push(bool hit, double now);  // true = 지금 재계획할 때
+    void reset() { hits_.clear(); }
+    void replanned(double now) { last_ = now; hits_.clear(); }
+    int count() const;
+
+private:
+    int window_, need_;
+    double cooldown_, last_ = -1e9;
+    std::vector<bool> hits_;
+};
+
+// 로봇이 지금 index 번째 점을 향해 가는 중일 때, 아직 지나지 않은 사용자 경유점(goal_at[i] >= index)
+std::vector<Pt> remaining_goals(const std::vector<Pt>& goals, const std::vector<int>& goal_at, int index);
+
 }  // namespace hg

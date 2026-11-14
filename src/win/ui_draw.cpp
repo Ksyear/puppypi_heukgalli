@@ -136,13 +136,13 @@ void App::draw_overlay(double now, const RobotSnapshot& s) {
     // 주행 상태 캡슐(위 가운데) — 상태를 한 곳에서만 보인다
     Capsule c = capsule_for(s, held_, focus_, screen_ == Screen::Connect, pad_.state().connected, drive_source_,
                             static_cast<int>(robot_.v2().speed_scale() * 100 + 0.5));
-    float ch = 48 * s_, cw = w::capsule2_width(ch, 330 * s_, c.text.c_str());
-    w::capsule2(dl, ImVec2((W - cw) / 2, m), ch, 330 * s_, c.tone, c.filled, c.lamp, c.text.c_str());
+    float ch = 48 * s_, cw = w::capsule_width(ch, 330 * s_, c.text.c_str());
+    w::capsule(dl, ImVec2((W - cw) / 2, m), ch, 330 * s_, c.tone, c.filled, c.lamp, c.text.c_str());
     // 경로 진행 배너(캡슐 아래)
     if (s.path.valid && (s.path.state == "rotate" || s.path.state == "drive") && screen_ != Screen::Map) {
         std::string t = fmt("경로 %s %d/%d · 남은 %.1f m · 스틱을 쓰면 취소", path_label(s.path.state), s.path.index + 1, s.path.count, s.path.remaining_m);
-        float bw = w::capsule2_width(36 * s_, 0, t.c_str());
-        w::capsule2(dl, ImVec2((W - bw) / 2, m + ch + 10 * s_), 36 * s_, 0, Tone::Info, false, Lamp::Full, t.c_str());
+        float bw = w::capsule_width(36 * s_, 0, t.c_str());
+        w::capsule(dl, ImVec2((W - bw) / 2, m + ch + 10 * s_), 36 * s_, 0, Tone::Info, false, Lamp::Full, t.c_str());
     }
 
     // 텔레메트리(오른쪽 위, 글자만). 탭하면 로그 화면
@@ -372,7 +372,7 @@ void App::draw_drive(double now, const RobotSnapshot& s) {
     if (hud_layer_ != 2) {
         if (cam_tex_.valid()) {
             float iw = static_cast<float>(cam_tex_.width()), ih = static_cast<float>(cam_tex_.height());
-            float k = std::min(W / iw, H / ih);  // fit: 시야를 자르지 않는다
+            float k = cfg_.camera_fill ? std::max(W / iw, H / ih) : std::min(W / iw, H / ih);  // 기본 fit: 시야를 자르지 않는다
             ImVec2 a((W - iw * k) / 2, (H - ih * k) / 2), b(a.x + iw * k, a.y + ih * k);
             dl->AddImage(ImTextureRef(reinterpret_cast<ImTextureID>(cam_tex_.srv())), a, b, ImVec2(0, 0), ImVec2(1, 1),
                          age > 2.0 ? IM_COL32(150, 150, 150, 255) : IM_COL32_WHITE);
@@ -386,8 +386,8 @@ void App::draw_drive(double now, const RobotSnapshot& s) {
     w::scrim(dl, ImVec2(0, H - 220 * s_), ImVec2(W, H), 0.0f, 0.6f);
     if (age > 2.0) {
         std::string t = fmt("영상 %.1f초 전", age);
-        float bw = w::capsule2_width(32 * s_, 0, t.c_str());
-        w::capsule2(dl, ImVec2((W - bw) / 2, 128 * s_), 32 * s_, 0, Tone::Warn, false, Lamp::Half, t.c_str());
+        float bw = w::capsule_width(32 * s_, 0, t.c_str());
+        w::capsule(dl, ImVec2((W - bw) / 2, 128 * s_), 32 * s_, 0, Tone::Warn, false, Lamp::Half, t.c_str());
     }
     if (hud_layer_ == 1) draw_radar(s, W - m - 128 * s_ - 56 * s_ - 26 * s_ - 150 * s_ - 30 * s_, H - m - 150 * s_ - 20 * s_, 135 * s_);
     if (hud_layer_ == 2) draw_radar(s, W / 2, H / 2 + 20 * s_, std::min(W, H) / 2 - 90 * s_);
@@ -423,55 +423,78 @@ void App::draw_drive(double now, const RobotSnapshot& s) {
 
 // ---------------- LiDAR 지도 ----------------
 
-// 점유 격자 → 텍스처. 점유 칸은 코어(밝은 청록) + 흐린 할로(블러), 빈 칸은 바닥보다 아주 조금 밝게, 모름은 투명
-void App::update_grid_texture(const RobotSnapshot& s) {
-    if (!s.grid || s.grid_version == grid_tex_version_) return;
-    const OccGrid& g = *s.grid;
+// 점유 격자 → RGBA. 점유 칸은 코어(밝은 청록) + 흐린 할로(블러), 빈 칸은 바닥보다 아주 조금 밝게, 모름은 투명.
+// 600×600 블러는 수 ms 가 걸려서 화면 스레드가 아닌 작업 스레드에서 만든다(120 Hz 유지)
+static std::vector<uint8_t> raster_grid(std::shared_ptr<const OccGrid> gp) {
+    const OccGrid& g = *gp;
     size_t n = static_cast<size_t>(g.w) * g.h;
     std::vector<float> halo(n, 0.0f), tmp(n, 0.0f);
     for (size_t i = 0; i < n; ++i) halo[i] = g.cells[i] >= 50 ? 1.0f : 0.0f;
-    // 분리형 박스 블러(r=2) 두 번 ≈ 가우시안
+    const int r = 2;  // 반지름 2 박스 블러 두 번 ≈ 가우시안. 누적 합으로 칸마다 O(1)
     for (int pass = 0; pass < 2; ++pass) {
-        for (int y = 0; y < g.h; ++y)
+        for (int y = 0; y < g.h; ++y) {
+            const float* row = &halo[static_cast<size_t>(y) * g.w];
+            float* out = &tmp[static_cast<size_t>(y) * g.w];
+            float acc = 0;
+            for (int k = -r; k <= r; ++k) acc += row[std::clamp(k, 0, g.w - 1)];
             for (int x = 0; x < g.w; ++x) {
-                float sum = 0;
-                for (int k = -2; k <= 2; ++k) sum += halo[static_cast<size_t>(y) * g.w + std::clamp(x + k, 0, g.w - 1)];
-                tmp[static_cast<size_t>(y) * g.w + x] = sum / 5;
+                out[x] = acc / (2 * r + 1);
+                acc += row[std::min(x + r + 1, g.w - 1)] - row[std::max(x - r, 0)];
             }
-        for (int y = 0; y < g.h; ++y)
-            for (int x = 0; x < g.w; ++x) {
-                float sum = 0;
-                for (int k = -2; k <= 2; ++k) sum += tmp[static_cast<size_t>(std::clamp(y + k, 0, g.h - 1)) * g.w + x];
-                halo[static_cast<size_t>(y) * g.w + x] = sum / 5;
+        }
+        for (int x = 0; x < g.w; ++x) {
+            float acc = 0;
+            for (int k = -r; k <= r; ++k) acc += tmp[static_cast<size_t>(std::clamp(k, 0, g.h - 1)) * g.w + x];
+            for (int y = 0; y < g.h; ++y) {
+                halo[static_cast<size_t>(y) * g.w + x] = acc / (2 * r + 1);
+                acc += tmp[static_cast<size_t>(std::min(y + r + 1, g.h - 1)) * g.w + x] - tmp[static_cast<size_t>(std::max(y - r, 0)) * g.w + x];
             }
+        }
     }
     std::vector<uint8_t> rgba(n * 4, 0);
     const ImVec4 occ = ImGui::ColorConvertU32ToFloat4(T.occ), fr = ImGui::ColorConvertU32ToFloat4(T.free),
                  glow = ImGui::ColorConvertU32ToFloat4(T.lidar);
     for (size_t i = 0; i < n; ++i) {
         int8_t v = g.cells[i];
-        float r = 0, gg = 0, b = 0, a = 0;
+        float rr = 0, gg = 0, b = 0, a = 0;
         if (v >= 50) {
-            r = occ.x; gg = occ.y; b = occ.z; a = 1.0f;
+            rr = occ.x; gg = occ.y; b = occ.z; a = 1.0f;
         } else {
             if (v >= 0) {
-                r = fr.x; gg = fr.y; b = fr.z; a = 0.9f;
+                rr = fr.x; gg = fr.y; b = fr.z; a = 0.9f;
             }
             float h = std::min(1.0f, halo[i] * 1.6f) * 0.55f;  // 벽 둘레 은은한 빛
             if (h > 0.01f) {
-                r = r * (1 - h) + glow.x * h;
+                rr = rr * (1 - h) + glow.x * h;
                 gg = gg * (1 - h) + glow.y * h;
                 b = b * (1 - h) + glow.z * h;
                 a = std::max(a, h);
             }
         }
         uint8_t* p = &rgba[i * 4];
-        p[0] = static_cast<uint8_t>(r * 255);
+        p[0] = static_cast<uint8_t>(rr * 255);
         p[1] = static_cast<uint8_t>(gg * 255);
         p[2] = static_cast<uint8_t>(b * 255);
         p[3] = static_cast<uint8_t>(a * 255);
     }
-    if (grid_tex_.update(dev_, ctx_, rgba.data(), g.w, g.h)) grid_tex_version_ = s.grid_version;
+    return rgba;
+}
+
+void App::update_grid_texture(const RobotSnapshot& s) {
+    // 끝난 작업이 있으면 올린다
+    if (grid_job_.valid() && grid_job_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        std::vector<uint8_t> rgba = grid_job_.get();
+        if (grid_job_grid_ && grid_tex_.update(dev_, ctx_, rgba.data(), grid_job_grid_->w, grid_job_grid_->h)) {
+            grid_tex_version_ = grid_job_version_;
+            grid_shown_ = grid_job_grid_;
+        }
+    }
+    // 새 격자가 왔고 진행 중인 작업이 없으면 시작
+    if (s.grid && s.grid_version != grid_tex_version_ && s.grid_version != grid_job_version_ && !grid_job_.valid()) {
+        grid_job_version_ = s.grid_version;
+        grid_job_grid_ = s.grid;
+        grid_job_ = std::async(std::launch::async, raster_grid, s.grid);
+    }
 }
 
 void App::draw_map(double now, const RobotSnapshot& s) {
@@ -480,7 +503,7 @@ void App::draw_map(double now, const RobotSnapshot& s) {
     float W = io.DisplaySize.x, H = io.DisplaySize.y, m = 20 * s_;
     update_grid_texture(s);
     bool have_pose = s.pose_rx > 0 && now - s.pose_rx < 3.0;
-    bool have_grid = s.grid && grid_tex_.valid();
+    bool have_grid = grid_shown_ && grid_tex_.valid();
     // 보기: 지도 고정(north-up). 확대 단계는 20/40/80/160 px/m(논리), 160 ms 보간. 따라가기면 로봇이 가운데(120 ms 지연)
     if (map_ppm_target_ <= 0) map_ppm_target_ = 80 * s_;
     if (map_ppm_ <= 0) map_ppm_ = map_ppm_target_;
@@ -514,7 +537,7 @@ void App::draw_map(double now, const RobotSnapshot& s) {
         }
     }
     if (have_grid) {
-        const OccGrid& g = *s.grid;
+        const OccGrid& g = *grid_shown_;
         dl->AddImage(ImTextureRef(reinterpret_cast<ImTextureID>(grid_tex_.srv())), to_screen(g.ox, g.oy + g.h * g.res),
                      to_screen(g.ox + g.w * g.res, g.oy), ImVec2(0, 1), ImVec2(1, 0));
     }
@@ -568,6 +591,28 @@ void App::draw_map(double now, const RobotSnapshot& s) {
         std::vector<ImVec2> pts;
         for (const auto& p : stroke_m_) pts.push_back(to_screen(p.first, p.second));
         dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), theme::alpha(T.accent, drawing_ ? 0.85f : 0.3f), 4 * s_, ImDrawFlags_RoundCornersAll);
+        // 다 그린 뒤: 벽(점유 칸)을 지나는 구간은 빨강 점선, 모르는 칸은 주황 점선(앱이 그 구간을 돌아간다)
+        if (!drawing_ && have_grid) {
+            const OccGrid& g = *grid_shown_;
+            float dash = 0;
+            for (size_t i = 1; i < stroke_m_.size(); ++i) {
+                const Pt& a = stroke_m_[i - 1];
+                const Pt& b = stroke_m_[i];
+                int worst = 0;  // 0 괜찮음, 1 모름, 2 점유
+                double len = std::hypot(b.first - a.first, b.second - a.second);
+                int steps = std::max(1, static_cast<int>(len / (g.res * 0.5)));
+                for (int k = 0; k <= steps; ++k) {
+                    double t = static_cast<double>(k) / steps;
+                    int v = cell_at(g, a.first + (b.first - a.first) * t, a.second + (b.second - a.second) * t);
+                    worst = std::max(worst, v >= 50 ? 2 : (v < 0 ? 1 : 0));
+                }
+                ImVec2 pa = to_screen(a.first, a.second), pb = to_screen(b.first, b.second);
+                float seg = std::hypot(pb.x - pa.x, pb.y - pa.y);
+                if (worst > 0 && std::fmod(dash, 14 * s_) < 8 * s_)
+                    dl->AddLine(pa, pb, worst == 2 ? T.danger : T.warn, 5 * s_);
+                dash += seg;
+            }
+        }
     }
     bool preview = !plan_preview_.path.empty();
     const std::vector<Pt>& show = preview ? plan_preview_.path : s.nav.planned;
@@ -660,8 +705,8 @@ void App::draw_map(double now, const RobotSnapshot& s) {
     // 지도 없음 안내(격자·스캔·로봇은 그대로 보인다)
     if (!have_grid) {
         const char* t = have_pose ? "지도 생성 중 · 로봇이 조금 움직이면 벽이 나타납니다" : "LiDAR 지도와 자세를 기다리는 중";
-        float bw = w::capsule2_width(36 * s_, 0, t);
-        w::capsule2(dl, ImVec2((W - bw) / 2, 200 * s_), 36 * s_, 0, Tone::Warn, false, Lamp::Half, t);
+        float bw = w::capsule_width(36 * s_, 0, t);
+        w::capsule(dl, ImVec2((W - bw) / 2, 200 * s_), 36 * s_, 0, Tone::Warn, false, Lamp::Half, t);
     }
 
     // 왼쪽 아래: 축척 + 그리기/이동 모드
@@ -676,7 +721,7 @@ void App::draw_map(double now, const RobotSnapshot& s) {
         static const char* modes[] = {"자동", "이동", "그리기"};
         static const char* micons[] = {ic::pin, ic::move, ic::edit};
         ImGui::SetCursorScreenPos(ImVec2(m, H - m - 48 * s_));
-        w::segmented2("mapmode", modes, 3, &map_mode_, 48 * s_, micons);
+        w::segmented("mapmode", modes, 3, &map_mode_, 48 * s_, micons);
     }
     // 아래 가운데: 보내기 필(미리보기 경로가 있을 때만) 또는 회피 상태
     {
@@ -705,13 +750,13 @@ void App::draw_map(double now, const RobotSnapshot& s) {
             }
         } else if (s.nav.phase == "blocked" || s.nav.phase == "done") {
             const std::string& t = s.nav.message;
-            float bw = w::capsule2_width(44 * s_, 0, t.c_str());
-            w::capsule2(dl, ImVec2(std::min((W - bw) / 2, right_limit - bw), H - m - 44 * s_), 44 * s_, 0,
+            float bw = w::capsule_width(44 * s_, 0, t.c_str());
+            w::capsule(dl, ImVec2(std::min((W - bw) / 2, right_limit - bw), H - m - 44 * s_), 44 * s_, 0,
                         s.nav.phase == "blocked" ? Tone::Danger : Tone::Ok, false, s.nav.phase == "blocked" ? Lamp::Cross : Lamp::Full, t.c_str());
         } else if (!path_busy && stroke_m_.empty() && have_pose) {
             const char* t = "로봇 옆에서 끌어 갈 길을 그리세요 · 벽을 지나면 앱이 돌아가는 길을 만듭니다";
-            float bw = w::capsule2_width(40 * s_, 0, t);
-            w::capsule2(dl, ImVec2(std::min((W - bw) / 2, right_limit - bw), H - m - 40 * s_ - 70 * s_), 40 * s_, 0, Tone::Info, false, Lamp::Ring, t);
+            float bw = w::capsule_width(40 * s_, 0, t);
+            w::capsule(dl, ImVec2(std::min((W - bw) / 2, right_limit - bw), H - m - 40 * s_ - 70 * s_), 40 * s_, 0, Tone::Info, false, Lamp::Ring, t);
         }
     }
 }
@@ -833,11 +878,11 @@ void App::draw_pose_sheet(const RobotSnapshot& s) {
               {"stance_y (cm)", &pose_sy_, -2, 2, "%.1f"}};
     for (int i = 0; i < 7; ++i) {
         ImGui::SetCursorScreenPos(ImVec2(x0 + 24 * s_ + (i % 2) * (colw + 24 * s_), y0 + 70 * s_ + (i / 2) * 70 * s_));
-        w::slider2(sl[i].label, sl[i].label, sl[i].v, sl[i].lo, sl[i].hi, sl[i].f, colw);
+        w::slider(sl[i].label, sl[i].label, sl[i].v, sl[i].lo, sl[i].hi, sl[i].f, colw);
     }
     float rt = static_cast<float>(pose_time_);
     ImGui::SetCursorScreenPos(ImVec2(x0 + 24 * s_ + colw + 24 * s_, y0 + 70 * s_ + 3 * 70 * s_));
-    if (w::slider2("runtime", "run_time (ms)", &rt, 200, 2000, "%.0f", colw)) pose_time_ = static_cast<int>(rt);
+    if (w::slider("runtime", "run_time (ms)", &rt, 200, 2000, "%.0f", colw)) pose_time_ = static_cast<int>(rt);
     ImGui::SetCursorScreenPos(ImVec2(x0 + 24 * s_, H - 72 * s_));
     if (w::pill_button("applypose", "이 자세로", 52 * s_, Tone::Accent, ic::play))
         robot_.set_pose_custom(pose_roll_ * kDeg, pose_pitch_ * kDeg, pose_yaw_ * kDeg, pose_height_, pose_xshift_, pose_sx_, pose_sy_, pose_time_);
@@ -873,7 +918,7 @@ void App::draw_log(double now, const RobotSnapshot& s) {
     w::big_number(dl, ImVec2(x0 + colw * 2, y), fmt("%.1f", robot_.camera_fps()).c_str(), "fps", "카메라",
                   age < 0 ? "프레임 없음" : fmt("나이 %.0f ms", age).c_str(), Tone::Neutral);
     w::big_number(dl, ImVec2(x0 + colw * 3, y), fmt("%.0f", io.Framerate).c_str(), "fps", "화면",
-                  fmt("%.1f ms", 1000.0f / std::max(1.0f, io.Framerate)).c_str(), Tone::Neutral);
+                  fmt("CPU %.2f ms · 최대 %.2f", cpu_ms_avg_, cpu_ms_max_).c_str(), cpu_ms_max_ > 8.0 ? Tone::Warn : Tone::Neutral);
     y += 92 * s_;
     dl->AddLine(ImVec2(x0, y), ImVec2(right, y), T.line, 1.0f);
     y += 14 * s_;
@@ -960,7 +1005,7 @@ void App::draw_connect(const RobotSnapshot& s) {
     static const char* tabs[] = {"연결", "설정"};
     static const char* ticons[] = {ic::wifi, ic::settings};
     ImGui::SetCursorScreenPos(ImVec2(x0, 92 * s_));
-    w::segmented2("ctab", tabs, 2, &connect_tab_, 44 * s_, ticons);
+    w::segmented("ctab", tabs, 2, &connect_tab_, 44 * s_, ticons);
     float y = 160 * s_;
     if (connect_tab_ == 0) {
         float colw = (right - x0 - 40 * s_) / 2;
@@ -987,8 +1032,12 @@ void App::draw_connect(const RobotSnapshot& s) {
         }
         if (discovered_once_ && found_.empty())
             dl->AddText(F.body, sz::body * s_, ImVec2(x0, ry), T.warn, "응답한 로봇이 없습니다. 같은 Wi-Fi 인지 확인하세요.");
+        if (now_s() >= local_ips_at_) {  // 운영체제에 매 프레임 묻지 않는다(어댑터 목록 조회가 수 ms)
+            local_ips_ = local_ipv4_addresses();
+            local_ips_at_ = now_s() + 5.0;
+        }
         std::string mine;
-        for (const auto& ip : local_ipv4_addresses()) mine += (privacy_ ? std::string("x.x.x.x") : ip) + "  ";
+        for (const auto& ip : local_ips_) mine += (privacy_ ? std::string("x.x.x.x") : ip) + "  ";
         dl->AddText(F.body, sz::caption * s_, ImVec2(x0, H - m - 30 * s_), T.text3, ("이 기기  " + mine).c_str());
         // 오른쪽: 주소 직접 입력(숫자 패드 — 흑갈리에는 실물 키보드가 없다)
         float kx = x0 + colw + 40 * s_;
@@ -1024,33 +1073,36 @@ void App::draw_connect(const RobotSnapshot& s) {
         float cw = std::min(right - x0, 760 * s_);
         bool changed = false;
         ImGui::SetCursorScreenPos(ImVec2(x0, y));
-        changed |= w::toggle2("t_single", "왼쪽 스틱 하나로 운전(전후 + 회전)", &cfg_.single_stick, cw);
+        changed |= w::toggle("t_single", "왼쪽 스틱 하나로 운전(전후 + 회전)", &cfg_.single_stick, cw);
         ImGui::SetCursorScreenPos(ImVec2(x0, y + 56 * s_));
-        changed |= w::toggle2("t_tilt", "기울여서 운전(RB 를 쥔 동안, 쥐는 순간 자세가 0)", &cfg_.tilt_enabled, cw);
+        changed |= w::toggle("t_tilt", "기울여서 운전(RB 를 쥔 동안, 쥐는 순간 자세가 0)", &cfg_.tilt_enabled, cw);
         float yy = y + 112 * s_;
         if (cfg_.tilt_enabled) {
             ImGui::SetCursorScreenPos(ImVec2(x0 + 24 * s_, yy));
-            changed |= w::toggle2("t_tf", "앞뒤 반대로", &cfg_.tilt_invert_forward, cw - 24 * s_);
+            changed |= w::toggle("t_tf", "앞뒤 반대로", &cfg_.tilt_invert_forward, cw - 24 * s_);
             ImGui::SetCursorScreenPos(ImVec2(x0 + 24 * s_, yy + 56 * s_));
-            changed |= w::toggle2("t_tt", "좌우 반대로", &cfg_.tilt_invert_turn, cw - 24 * s_);
+            changed |= w::toggle("t_tt", "좌우 반대로", &cfg_.tilt_invert_turn, cw - 24 * s_);
             dl->AddText(F.body, sz::caption * s_, ImVec2(x0 + 24 * s_, yy + 112 * s_), T.text3, ("가속도계: " + tilt_.status()).c_str());
             tilt_drive_.invert_forward = cfg_.tilt_invert_forward;
             tilt_drive_.invert_turn = cfg_.tilt_invert_turn;
             yy += 140 * s_;
         }
         ImGui::SetCursorScreenPos(ImVec2(x0, yy));
-        changed |= w::toggle2("t_cam", "카메라 영상 받기(Wi-Fi 15~40 Mbps)", &cfg_.camera, cw);
+        changed |= w::toggle("t_cam", "카메라 영상 받기(Wi-Fi 15~40 Mbps)", &cfg_.camera, cw);
         if (cfg_.camera != robot_.camera_enabled()) robot_.set_camera_enabled(cfg_.camera);
+        yy += 56 * s_;
+        ImGui::SetCursorScreenPos(ImVec2(x0, yy));
+        changed |= w::toggle("t_fill", "카메라 화면 꽉 채우기(가장자리가 잘림)", &cfg_.camera_fill, cw);
         yy += 70 * s_;
         ImGui::SetCursorScreenPos(ImVec2(x0, yy));
-        if (w::slider2("s_speed", "최고 속도 비율", &cfg_.max_speed, 0.1f, 1.0f, "%.2f", cw)) {
+        if (w::slider("s_speed", "최고 속도 비율", &cfg_.max_speed, 0.1f, 1.0f, "%.2f", cw)) {
             speed_full_ = false;
             robot_.v2().set_speed_scale(cfg_.max_speed);
             changed = true;
         }
         yy += 70 * s_;
         ImGui::SetCursorScreenPos(ImVec2(x0, yy));
-        if (w::slider2("s_dz", "스틱 데드존", &cfg_.deadzone, 0.05f, 0.4f, "%.2f", cw)) {
+        if (w::slider("s_dz", "스틱 데드존", &cfg_.deadzone, 0.05f, 0.4f, "%.2f", cw)) {
             pad_.deadzone = cfg_.deadzone;
             changed = true;
         }
