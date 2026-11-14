@@ -4,4 +4,4 @@ build-win/
 config.json
 shots/
 toolchain/
-docs/SECURITY_REVIEW*.md
+docs/SECURITY_*.md
