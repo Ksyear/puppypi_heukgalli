@@ -2,7 +2,7 @@
 
 **ROG Ally X 를 Hiwonder PuppyPi 전용 핸드헬드 리모컨으로 쓰는 C++ 클라이언트 앱.** 스틱·트리거로 데드맨 주행, 손가락으로 지도에 경로를 그려 보내고, 카메라와 LiDAR 레이더 HUD 를 120 Hz 터치 화면에 띄운다. 로봇 소프트웨어는 한 줄도 바꾸지 않는다.
 
-> **English summary.** A Win32 + Direct3D 11 + Dear ImGui 1.93.0 client for a Hiwonder PuppyPi running a team-written ROS 2 stack, built for the ASUS ROG Ally X handheld ("heukgalli", the author's black Ally X on Windows 11). It speaks only the robot's published network interfaces (UDP Protocol v2, rosbridge WebSocket, HTTP MJPEG/JSON); no Hiwonder or team code is included and the robot software is unchanged. Single static exe via MinGW-w64 GCC 16.2, cross-compiled on macOS or built on the Ally with the in-folder toolchain. The map screen renders the robot's LiDAR occupancy grid (`/map`) with live scans and plans around obstacles on the app side (A* with robot-size inflation, re-planning when the live scan blocks the path), because the robot itself has no obstacle avoidance. Core unit tests (86 checks) pass on macOS and on the Ally; integration scripts pass against a mock robot on the same Mac (drive 14/14, obstacle avoidance 8/8). **Status: runs on the Ally; not yet tested with the real robot.** Hardware testing is tracked in `docs/HW_TEST_CHECKLIST.md`.
+> **English summary.** A Win32 + Direct3D 11 + Dear ImGui 1.93.0 client for a Hiwonder PuppyPi running a team-written ROS 2 stack, built for the ASUS ROG Ally X handheld ("heukgalli", the author's black Ally X on Windows 11). It speaks only the robot's published network interfaces (UDP Protocol v2, rosbridge WebSocket, HTTP MJPEG/JSON); no Hiwonder or team code is included and the robot software is unchanged. Single static exe via MinGW-w64 GCC 16.2, cross-compiled on macOS or built on the Ally with the in-folder toolchain. The map screen renders the robot's LiDAR occupancy grid (`/map`) with live scans and plans around obstacles on the app side (A* with robot-size inflation, re-planning when the live scan blocks the path), because the robot itself has no obstacle avoidance. Core unit tests (95 checks) pass on macOS, Linux (Ubuntu 24.04) and the Ally; integration scripts pass against a mock robot on the same Mac (drive 14/14, obstacle avoidance 8/8). **Status: runs on the Ally; not yet tested with the real robot.** Hardware testing is tracked in `docs/HW_TEST_CHECKLIST.md`.
 
 ---
 
@@ -10,10 +10,10 @@
 
 | 항목 | 상태 |
 |---|---|
-| 코어(프로토콜·파서·LiDAR 지도·경로 계획) | 단위 시험 86개 통과(macOS clang, 흑갈리 MinGW) |
+| 코어(프로토콜·파서·LiDAR 지도·경로 계획) | 단위 시험 95개 통과(macOS clang, Ubuntu 24.04 GCC, 흑갈리 MinGW) |
 | 통합 시험(가짜 로봇) | 맥 루프백: `tests/it_drive.txt` 14/14, 장애물 회피 `tests/it_avoid.txt` 8/8 통과. 흑갈리 → 맥(Tailscale): `it_drive` 14/14 통과. `it_avoid` 는 Tailscale 이 도쿄 중계(DERP)로 바뀐 때 UDP 유실 25~56% 로 로봇 watchdog(0.4 s)이 경로를 취소해 3개 실패 — 설계대로 멈춘 것이며 실제 LAN 에서 다시 확인 필요 |
 | Windows 앱 exe | macOS 교차 빌드와 흑갈리 자체 빌드(`build.ps1`) 모두 성공, 경고 0 |
-| 흑갈리에서 실행 | **확인함(가짜 로봇에 연결).** 다섯 화면 표시, 내장 패드 XInput 인식, 화면 120 fps. 진동·터치 스케치·기울기는 아직 사람이 확인하지 않음 |
+| 흑갈리에서 실행 | **확인함(가짜 로봇에 연결).** 다섯 화면 표시, 내장 패드 XInput 인식, 화면 120 fps, 프레임당 CPU 평균 0.5–1.0 ms([측정 기록](docs/MEASUREMENTS.md)). 진동·터치 스케치·기울기는 아직 사람이 확인하지 않음 |
 | 실제 로봇 시험 | **아직 안 함.** 사용자가 `docs/HW_TEST_CHECKLIST.md` 로 수행 |
 
 가짜 로봇 시험 통과는 실기 검증이 아니다. 아래 모든 "동작한다" 는 서술은 코드와 가짜 로봇 기준이다.
@@ -33,6 +33,8 @@
 ![디자인 전후](docs/screenshots/before_after_drive.png)
 
 <!-- TODO: 실제 로봇 장면 GIF(실기 시험 뒤) -->
+
+더 읽을 것: [아키텍처](docs/ARCHITECTURE.md) · [코드 둘러보기(핵심 5곳)](docs/CODE_TOUR.md) · [측정 기록](docs/MEASUREMENTS.md) · [실기 점검표](docs/HW_TEST_CHECKLIST.md)
 
 ## LiDAR 지도와 장애물 회피
 
@@ -168,7 +170,7 @@ make CROSS=x86_64-w64-mingw32- BUILD=build-win app   # Windows exe 교차 빌드
 
 ### 단위 시험 (`tests/test_core.cpp`, 외부 프레임워크 없음)
 
-`make test` → **86 checks pass** (macOS clang, 흑갈리에서 `.\\build.ps1 test` 도 같음). LiDAR·계획 시험: 점유 격자 빠른 해석, 쿼터니언→yaw, 스캔→지도 변환, 직선 막힘 우회, 벽 틈 통과, 완전히 막힘 실패, 경유점이 장애물 안이면 실패, 점유 격자 지도 기반 우회, 앞쪽 감시 범위. MinGW 로도 컴파일된다(`build-win/test_core.exe`). 대상: JSON 파서 왕복·깊이 제한·정수/실수 출력, ACK 8필드 엄격 파싱, `decide_drive()` 전이 표(중립 확인·데드맨·입력 정지·ACK 끊김·estop·timeout 자동 재개·재프레스), 발견 응답 nonce/형식 검증, 지도 픽셀↔미터 변환, RDP 스케치 단순화(직선→2점, L→3점, 지그재그→≤20점), `/api/map`·`/api/path`·`/scan` 파서, UUID/base64/문자열 도구.
+`make test` → **95 checks pass** (macOS clang, Ubuntu 24.04, 흑갈리에서 `.\\build.ps1 test` 도 같음). 막힘 판정(4번 중 3번·쿨다운)과 남은 경유점 계산도 시험한다. LiDAR·계획 시험: 점유 격자 빠른 해석, 쿼터니언→yaw, 스캔→지도 변환, 직선 막힘 우회, 벽 틈 통과, 완전히 막힘 실패, 경유점이 장애물 안이면 실패, 점유 격자 지도 기반 우회, 앞쪽 감시 범위. MinGW 로도 컴파일된다(`build-win/test_core.exe`). 대상: JSON 파서 왕복·깊이 제한·정수/실수 출력, ACK 8필드 엄격 파싱, `decide_drive()` 전이 표(중립 확인·데드맨·입력 정지·ACK 끊김·estop·timeout 자동 재개·재프레스), 발견 응답 nonce/형식 검증, 지도 픽셀↔미터 변환, RDP 스케치 단순화(직선→2점, L→3점, 지그재그→≤20점), `/api/map`·`/api/path`·`/scan` 파서, UUID/base64/문자열 도구.
 
 ### 통합 시험 (가짜 로봇, 같은 Mac 루프백)
 
