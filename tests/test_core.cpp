@@ -4,7 +4,10 @@
 #include <string>
 
 #include "../src/discovery.hpp"
+#include "../src/image_decode.hpp"
 #include "../src/json.hpp"
+#include "../src/lidar.hpp"
+#include "../src/planner.hpp"
 #include "../src/path_tools.hpp"
 #include "../src/robot.hpp"
 #include "../src/util.hpp"
@@ -189,6 +192,83 @@ static void test_util() {
     CHECK(trim("  x y \n") == "x y");
 }
 
+
+static void test_lidar() {
+    // 3×2 격자 메시지(rosbridge publish 형식)
+    std::string msg = R"({"op":"publish","topic":"/map","msg":{"header":{"frame_id":"map"},"info":{"resolution":0.05,"width":3,"height":2,"origin":{"position":{"x":-15.0,"y":-15.0,"z":0.0},"orientation":{"x":0,"y":0,"z":0,"w":1}}},"data":[-1,0,100, 0 ,-1,  55]}})";
+    OccGrid g;
+    CHECK(parse_occupancy_grid(msg, g));
+    CHECK(g.w == 3 && g.h == 2 && g.cells.size() == 6 && g.cells[2] == 100 && g.cells[5] == 55);
+    CHECK_NEAR(g.ox, -15.0, 1e-12);
+    CHECK(g.x0 == 0 && g.x1 == 2 && g.y0 == 0 && g.y1 == 1);
+    CHECK(!parse_occupancy_grid(R"({"msg":{"info":{"width":3,"height":3,"resolution":0.05},"data":[0,0]}})", g));  // 크기 불일치
+    CHECK_NEAR(yaw_from_quaternion(0, 0, std::sin(0.6), std::cos(0.6)), 1.2, 1e-9);
+    Pose2D pose{1.0, 2.0, 3.14159265358979 / 2};
+    auto pts = scan_to_map({1.0f, -1.0f, 0.0f}, 0.0, 0.1, 12.0, pose);  // 정면 1 m → 지도 (1, 3)
+    CHECK(pts.size() == 1);
+    CHECK_NEAR(pts[0].first, 1.0, 1e-6);
+    CHECK_NEAR(pts[0].second, 3.0, 1e-6);
+    std::string out;
+    CHECK(base64_decode("aGVsbG8=", out) && out == "hello");
+    CHECK(!base64_decode("a$b", out));
+}
+
+static double min_clearance(const std::vector<Pt>& path, const Pt& start, const std::vector<Pt>& obs) {
+    double best = 1e9;
+    std::vector<Pt> all{start};
+    all.insert(all.end(), path.begin(), path.end());
+    for (size_t i = 1; i < all.size(); ++i)
+        for (int k = 0; k <= 50; ++k) {
+            double t = k / 50.0;
+            Pt p{all[i - 1].first + (all[i].first - all[i - 1].first) * t, all[i - 1].second + (all[i].second - all[i - 1].second) * t};
+            for (const auto& o : obs) best = std::min(best, std::hypot(p.first - o.first, p.second - o.second));
+        }
+    return best;
+}
+
+static void test_planner() {
+    PlanConfig cfg;
+    // 1) 막힌 것 없음 → 그린 그대로
+    PlanResult r = plan_path(nullptr, {}, {0, 0}, {{2, 0}, {2, 1}}, cfg);
+    CHECK(r.ok && !r.detoured && r.path.size() == 2);
+    // 2) 직선 위에 장애물(0.4 m 폭 벽 조각) → 돌아감, 장애물에서 inflate 이상 떨어짐
+    std::vector<Pt> obs;
+    for (double y = -0.2; y <= 0.2001; y += 0.05) obs.push_back({1.0, y});
+    r = plan_path(nullptr, obs, {0, 0}, {{2, 0}}, cfg);
+    CHECK(r.ok && r.detoured && r.path.size() >= 2 && r.path.size() <= 20);
+    CHECK(min_clearance(r.path, {0, 0}, obs) >= cfg.inflate - 0.06);
+    CHECK_NEAR(r.path.back().first, 2.0, 1e-9);
+    // 3) 긴 벽에 틈 하나(0.8 m) → 틈으로 지나감
+    obs.clear();
+    for (double y = -3; y <= 3.0001; y += 0.05)
+        if (std::fabs(y - 1.5) > 0.4) obs.push_back({1.0, y});
+    r = plan_path(nullptr, obs, {0, 0}, {{2, 0}}, cfg);
+    CHECK(r.ok && r.detoured);
+    CHECK(min_clearance(r.path, {0, 0}, obs) >= cfg.inflate - 0.06);
+    // 4) 완전히 막힌 벽(계획 범위보다 넓게) → 실패와 이유
+    obs.clear();
+    for (double y = -6; y <= 6.0001; y += 0.05) obs.push_back({1.0, y});
+    r = plan_path(nullptr, obs, {0, 0}, {{2, 0}}, cfg);
+    CHECK(!r.ok && !r.reason.empty());
+    // 5) 경유점이 장애물 안 → 실패
+    r = plan_path(nullptr, {{2.0, 0.0}}, {0, 0}, {{2.05, 0}}, cfg);
+    CHECK(!r.ok);
+    // 6) 점유 격자 지도로 계획: 벽(점유 100)을 피한다
+    OccGrid g;
+    g.w = 100; g.h = 100; g.res = 0.05; g.ox = -1; g.oy = -2.5;
+    g.cells.assign(10000, 0);
+    for (int y = 0; y < 100; ++y)
+        for (int x = 39; x <= 41; ++x)
+            if (y < 30 || y > 46) g.cells[y * 100 + x] = 100;  // x≈1 m 벽, 틈 y∈[-1.0,-0.2]
+    r = plan_path(&g, {}, {0, 0}, {{2, 0}}, cfg);
+    CHECK(r.ok && r.detoured);
+    // 7) 남은 경로 감시
+    std::vector<Pt> hits;
+    CHECK(path_blocked_by({{1.0, 0.05}}, {0, 0}, {{2, 0}}, 0, 0.2, 1.5, &hits) && hits.size() == 1);
+    CHECK(!path_blocked_by({{1.0, 0.5}}, {0, 0}, {{2, 0}}, 0, 0.2, 1.5));
+    CHECK(!path_blocked_by({{1.8, 0.0}}, {0, 0}, {{2, 0}}, 0, 0.2, 1.5));  // 앞쪽 1.5 m 밖
+}
+
 int main() {
     test_json();
     test_ack();
@@ -197,6 +277,8 @@ int main() {
     test_map_and_path();
     test_parsers();
     test_util();
+    test_lidar();
+    test_planner();
     std::printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

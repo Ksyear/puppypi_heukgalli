@@ -50,7 +50,8 @@ static void help() {
         "      estop | clear | home | pose <이름> | action <이름> | poses | actions\n"
         "      path x,y [x,y ...] | cancel | savemap | resetmap | topics | snap <파일.jpg>\n"
         "      wait <초> | expect v2 <state> [초] | expect path <state> [초] | expect estop <0|1> [초]\n"
-        "      expect result <문구> [초] | rtt <초> | sniff on|off | log | quit");
+        "      expect result <문구> [초] | rtt <초> | sniff on|off | log | quit\n"
+        "      go x,y [x,y ...] (장애물 회피) | nav | http <경로> | expect nav <phase> | expect replans <n> | expect map");
 }
 
 // 0 = 계속, 1 = expect 실패, 2 = 종료
@@ -106,6 +107,27 @@ static int run_line(Robot& r, const std::string& raw) {
         }
         std::string err;
         if (!r.send_path(pts, &err)) std::printf("경로 실패: %s\n", err.c_str());
+    } else if (c == "go" && a.size() >= 2) {
+        // 장애물을 피하는 경로(앱이 계획하고, 가는 중에 막히면 다시 계획)
+        std::vector<Pt> pts;
+        for (size_t i = 1; i < a.size(); ++i) {
+            auto xy = split(a[i], ',');
+            if (xy.size() == 2) pts.emplace_back(std::atof(xy[0].c_str()), std::atof(xy[1].c_str()));
+        }
+        std::string err;
+        if (!r.go_path(pts, &err)) std::printf("회피 경로 실패: %s\n", err.c_str());
+        else {
+            NavStatus n = r.snapshot().nav;
+            std::printf("보냄 %zu점%s:", n.planned.size(), n.detoured ? " (우회)" : "");
+            for (const auto& p : n.planned) std::printf(" (%.2f,%.2f)", p.first, p.second);
+            std::printf("\n");
+        }
+    } else if (c == "nav") {
+        NavStatus n = r.snapshot().nav;
+        std::printf("nav %s · %s · 우회 %d회 · 경로 %zu점\n", n.phase.c_str(), n.message.c_str(), n.replans, n.planned.size());
+    } else if (c == "http" && a.size() >= 2) {
+        HttpResponse h = http_get(r.host(), 8090, a[1], 1500);
+        std::printf("%d %s\n", h.status, h.body.substr(0, 300).c_str());
     } else if (c == "cancel") {
         r.cancel_path();
     } else if (c == "savemap") {
@@ -163,6 +185,14 @@ static int run_line(Robot& r, const std::string& raw) {
         else if (what == "path") ok = wait_for([&] { return r.snapshot().path.state == want; }, tmo);
         else if (what == "estop") ok = wait_for([&] { return r.snapshot().v2.estop == (want == "1"); }, tmo);
         else if (what == "result") ok = wait_for([&] { return r.snapshot().last_result.find(want) != std::string::npos; }, tmo);
+        else if (what == "nav") ok = wait_for([&] { return r.snapshot().nav.phase == want; }, tmo);
+        else if (what == "replans") ok = wait_for([&] { return r.snapshot().nav.replans >= std::atoi(want.c_str()); }, tmo);
+        else if (what == "map") ok = wait_for([&] { return r.snapshot().grid != nullptr; }, tmo);
+        else if (what == "http") {  // expect http <경로> <포함할 문구...>
+            auto sp = want.find(' ');
+            std::string path = want.substr(0, sp), needle = sp == std::string::npos ? "" : want.substr(sp + 1);
+            ok = wait_for([&] { return http_get(r.host(), 8090, path, 1000).body.find(needle) != std::string::npos; }, tmo);
+        }
         std::printf("%s expect %s %s\n", ok ? "PASS" : "FAIL", what.c_str(), want.c_str());
         if (!ok) {
             print_status(r);

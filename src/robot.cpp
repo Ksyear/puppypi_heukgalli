@@ -2,7 +2,9 @@
 
 #include "catalog.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 
 namespace hg {
@@ -10,7 +12,6 @@ namespace hg {
 namespace {
 constexpr uint16_t kV2Port = 5001, kVideoPort = 8080, kMediaPort = 8090, kRosbridgePort = 9090;
 const char* kCameraPath = "/stream?topic=/usb_cam/image_raw&type=ros_compressed";
-const char* kMapPath = "/stream?topic=/lidar_map/image&type=ros_compressed";
 }  // namespace
 
 bool parse_map_info(const Json& j, MapInfo& out) {
@@ -105,16 +106,36 @@ bool Robot::connect(const std::string& host, std::string* err) {
         status_ = body;
         status_rx_ = now_s();
     });
+    // LiDAR 지도(600×600 격자, 2 s 마다). PNG 압축으로 받고, 안 오면 nav_loop 가 일반 JSON 으로 바꾼다
+    rb->subscribe_raw("/map", "nav_msgs/OccupancyGrid", [this](const std::string& text) {
+        auto g = std::make_shared<OccGrid>();
+        if (!parse_occupancy_grid(text, *g)) return;
+        std::lock_guard<std::mutex> lk(mu_);
+        grid_ = std::move(g);
+        ++grid_version_;
+        grid_rx_ = now_s();
+    }, 0, "png");
+    rb->subscribe("/lidar_map/pose", "geometry_msgs/PoseStamped", [this](const Json& m) {
+        Pose2D p;
+        if (!parse_pose_stamped(m, p)) return;
+        std::lock_guard<std::mutex> lk(mu_);
+        pose_ = p;
+        pose_rx_ = now_s();
+        if (trail_.empty() || std::hypot(trail_.back().first - p.x, trail_.back().second - p.y) > 0.03) {
+            trail_.emplace_back(p.x, p.y);
+            if (trail_.size() > 4000) trail_.erase(trail_.begin(), trail_.begin() + 1000);
+        }
+    }, 100);
     rb->subscribe("/scan", "sensor_msgs/LaserScan", [this](const Json& m) {
         ScanData s;
         if (!parse_scan(m, s)) return;
         s.rx_time = now_s();
         std::lock_guard<std::mutex> lk(mu_);
         scan_ = std::move(s);
-    }, 200);
+    }, 100);
     rb->start();
-    auto map_img = std::make_unique<MjpegReader>(host, kVideoPort, kMapPath);
-    map_img->start();
+    // 지도는 이제 /map 격자를 앱이 직접 그린다. 로봇이 지도 JPEG 를 만들지 않도록 그 스트림은 열지 않는다
+    std::unique_ptr<MjpegReader> map_img;
     std::unique_ptr<MjpegReader> cam;
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -131,9 +152,19 @@ bool Robot::connect(const std::string& host, std::string* err) {
         scan_ = ScanData{};
         arbiter_ = status_ = Json();
         robot_estop_requested_ = false;
+        grid_.reset();
+        grid_version_ = 0;
+        grid_rx_ = pose_rx_ = 0;
+        grid_png_ = true;
+        rb_connected_since_ = 0;
+        trail_.clear();
+        nav_ = NavStatus{};
+        nav_temp_.clear();
     }
     http_run_ = true;
     http_th_ = std::thread([this] { http_loop(); });
+    nav_run_ = true;
+    nav_th_ = std::thread([this] { nav_loop(); });
     events_.add("연결: " + host);
     return true;
 }
@@ -146,6 +177,8 @@ void Robot::disconnect() {
         connected_ = false;
     }
     if (!was) return;
+    nav_run_ = false;
+    if (nav_th_.joinable()) nav_th_.join();
     v2_.stop();
     http_run_ = false;
     if (http_th_.joinable()) http_th_.join();
@@ -204,6 +237,10 @@ void Robot::http_loop() {
                     if (parse_map_info(Json::parse(r.body), mi)) {
                         mi.rx_time = now_s();
                         map_ = mi;
+                        if (now_s() - pose_rx_ > 1.5) {  // 10 Hz 자세가 없으면 1 Hz 값으로 대신
+                            pose_ = Pose2D{mi.robot_x, mi.robot_y, mi.robot_yaw};
+                            pose_rx_ = mi.rx_time;
+                        }
                     }
                 } catch (const std::exception&) {
                 }
@@ -254,6 +291,14 @@ RobotSnapshot Robot::snapshot() const {
     s.scan = scan_;
     s.last_result = last_result_;
     s.robot_estop_requested = robot_estop_requested_;
+    s.grid = grid_;
+    s.grid_version = grid_version_;
+    s.grid_rx = grid_rx_;
+    s.grid_png = grid_png_;
+    s.pose = pose_;
+    s.pose_rx = pose_rx_;
+    s.trail = trail_;
+    s.nav = nav_;
     return s;
 }
 
@@ -359,7 +404,14 @@ void Robot::run_action(const std::string& name) {
 }
 
 void Robot::save_map() { call("/lidar_mapper/save_map", "std_srvs/Trigger", Json::object(), "지도 저장"); }
-void Robot::reset_map() { call("/lidar_mapper/reset_map", "std_srvs/Trigger", Json::object(), "지도 새로 시작"); }
+void Robot::reset_map() {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        trail_.clear();  // 새 지도는 원점이 지금 위치로 바뀐다
+    }
+    stop_nav("지도 새로 시작");
+    call("/lidar_mapper/reset_map", "std_srvs/Trigger", Json::object(), "지도 새로 시작");
+}
 
 void Robot::list_topics() {
     RosBridge* rb;
@@ -417,6 +469,7 @@ bool Robot::send_path(const std::vector<Pt>& pts, std::string* err) {
 }
 
 void Robot::cancel_path() {
+    stop_nav("사용자 취소");
     if (v2_.cancel_path()) events_.add("경로 취소 전송");
 }
 
@@ -436,6 +489,220 @@ bool Robot::save_snapshot_jpeg(const std::string& path, std::string* err) const 
     std::fwrite(jpeg.data(), 1, jpeg.size(), f);
     std::fclose(f);
     return true;
+}
+
+}  // namespace hg
+
+namespace hg {
+
+// ---------------- 장애물 회피(앱 쪽) ----------------
+
+std::vector<Pt> Robot::live_obstacles_locked(double now) const {
+    std::vector<Pt> obs;
+    if (scan_.valid && now - scan_.rx_time < 1.0 && now - pose_rx_ < 1.0)
+        for (const auto& p : scan_to_map(scan_.ranges, scan_.angle_min, scan_.angle_increment, std::min(scan_.range_max, 6.0), pose_))
+            obs.emplace_back(p.first, p.second);
+    for (const auto& t : nav_temp_)
+        if (t.second > now) obs.push_back(t.first);
+    return obs;
+}
+
+PlanResult Robot::preview_plan(const std::vector<Pt>& waypoints) const {
+    std::shared_ptr<const OccGrid> g;
+    std::vector<Pt> obs;
+    Pt start;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        g = grid_;
+        obs = live_obstacles_locked(now_s());
+        start = {pose_.x, pose_.y};
+    }
+    return plan_path(g.get(), obs, start, waypoints, plan_config);
+}
+
+bool Robot::go_path(const std::vector<Pt>& waypoints, std::string* err) {
+    PlanResult r = preview_plan(waypoints);
+    if (!r.ok) {
+        if (err) *err = r.reason;
+        std::lock_guard<std::mutex> lk(mu_);
+        nav_ = NavStatus{};
+        nav_.phase = "blocked";
+        nav_.message = r.reason;
+        nav_.goals = waypoints;
+        return false;
+    }
+    int64_t seq = -1;
+    if (!v2_.send_path(r.path, &seq, err)) return false;
+    events_.add(fmt("경로 전송 %zu점%s (sequence %lld, 길이 %.2f m)", r.path.size(), r.detoured ? ", 장애물 우회" : "",
+                    static_cast<long long>(seq), polyline_length(r.path)));
+    std::lock_guard<std::mutex> lk(mu_);
+    nav_ = NavStatus{};
+    nav_.phase = "following";
+    nav_.message = r.detoured ? "장애물을 피해 가는 중" : "경로 따라가는 중";
+    nav_.detoured = r.detoured;
+    nav_.goals = waypoints;
+    nav_.planned = r.path;
+    nav_goal_at_ = r.goal_at;
+    nav_seq_ = seq;
+    nav_hits_.clear();
+    nav_last_replan_ = now_s();
+    return true;
+}
+
+void Robot::stop_nav(const std::string& why) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (nav_.phase == "following" || nav_.phase == "replanning") {
+        nav_.phase = "idle";
+        nav_.message = why;
+        events_.add("회피 주행 끝: " + why);
+    }
+    nav_pending_send_ = false;
+}
+
+// 10 Hz: 로봇 경로 상태를 따라가며, 남은 경로 앞 1.6 m 안에 장애물이 스캔 4번 중 3번 잡히면 취소 → 다시 계획 → 다시 보냄
+void Robot::nav_loop() {
+    const double lookahead = 1.6;
+    while (nav_run_) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        double now = now_s();
+        V2Snapshot v = v2_.snapshot();
+        RobotSnapshot s;
+        std::vector<Pt> obs, planned, goals;
+        std::vector<int> goal_at;
+        int64_t seq;
+        std::string phase;
+        bool new_scan;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            // 지도 PNG 압축이 8 초 넘게 안 오면 로봇의 rosbridge 가 PNG 를 못 만드는 것으로 보고 일반 JSON 으로 바꾼다
+            bool rbc = rb_ && rb_->connected();
+            if (rbc && rb_connected_since_ == 0) rb_connected_since_ = now;
+            if (!rbc) rb_connected_since_ = 0;
+            if (rbc && grid_png_ && grid_rx_ == 0 && now - rb_connected_since_ > 8.0) {
+                grid_png_ = false;
+                rb_->subscribe_raw("/map", "nav_msgs/OccupancyGrid", [this](const std::string& text) {
+                    auto g = std::make_shared<OccGrid>();
+                    if (!parse_occupancy_grid(text, *g)) return;
+                    std::lock_guard<std::mutex> lk2(mu_);
+                    grid_ = std::move(g);
+                    ++grid_version_;
+                    grid_rx_ = now_s();
+                }, 2000, "");
+                events_.add("지도: PNG 압축 응답 없음 → 일반 JSON 으로 받음");
+            }
+            for (size_t i = 0; i < nav_temp_.size();)
+                if (nav_temp_[i].second <= now) nav_temp_.erase(nav_temp_.begin() + static_cast<long>(i));
+                else ++i;
+            phase = nav_.phase;
+            if (phase != "following" && phase != "replanning") continue;
+            s.path = path_;
+            s.pose = pose_;
+            s.pose_rx = pose_rx_;
+            new_scan = scan_.valid && scan_.rx_time > nav_last_scan_;
+            if (new_scan) nav_last_scan_ = scan_.rx_time;
+            obs = live_obstacles_locked(now);
+            planned = nav_.planned;
+            goals = nav_.goals;
+            goal_at = nav_goal_at_;
+            seq = nav_seq_;
+        }
+        // 사용자가 스틱으로 직접 운전하면(로봇이 경로를 취소한다) 회피 주행을 끝낸다
+        if (v.cmd_active) {
+            stop_nav("직접 운전으로 전환");
+            continue;
+        }
+        if (v.estop) {
+            stop_nav("비상정지");
+            continue;
+        }
+        bool ours = s.path.valid && s.path.request_sequence == seq && s.path.request_client_id == v.client_id;
+        if (phase == "following" && ours) {
+            if (s.path.state == "done") {
+                std::lock_guard<std::mutex> lk(mu_);
+                nav_.phase = "done";
+                nav_.message = "도착";
+                continue;
+            }
+            if (s.path.state == "cancelled" && now > nav_own_cancel_until_) {
+                stop_nav("로봇이 경로를 취소함" + (s.path.reason.empty() ? std::string() : " (" + s.path.reason + ")"));
+                continue;
+            }
+        }
+        Pt here{s.pose.x, s.pose.y};
+        // 다시 계획한 경로를 보낼 차례: 로봇이 앞 경로 취소를 처리하고 중립(idle)이면 보낸다
+        if (phase == "replanning") {
+            bool robot_free = !(s.path.valid && (s.path.state == "rotate" || s.path.state == "drive") && s.path.request_sequence == seq);
+            std::vector<Pt> next;
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                next = nav_pending_path_;
+            }
+            if (robot_free && v.state == "idle") {
+                int64_t nseq = -1;
+                std::string err;
+                if (v2_.send_path(next, &nseq, &err)) {
+                    std::lock_guard<std::mutex> lk(mu_);
+                    nav_.phase = "following";
+                    nav_.message = fmt("장애물을 피해 다시 가는 중(%d번째 우회)", nav_.replans);
+                    nav_.planned = next;
+                    nav_seq_ = nseq;
+                    nav_hits_.clear();
+                    events_.add(fmt("우회 경로 전송 %zu점 (sequence %lld)", next.size(), static_cast<long long>(nseq)));
+                }
+            } else if (now - nav_pending_since_ > 3.0) {
+                stop_nav("우회 경로를 보내지 못함(로봇 " + v.state + ")");
+            }
+            continue;
+        }
+        if (!new_scan || now - s.pose_rx > 1.0) continue;
+        int index = ours ? std::max(0, s.path.index) : 0;
+        std::vector<Pt> hits;
+        bool hit = path_blocked_by(obs, here, planned, static_cast<size_t>(index), plan_config.inflate - 0.03, lookahead, &hits);
+        int count;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            nav_hits_.push_back(hit);
+            while (nav_hits_.size() > 4) nav_hits_.pop_front();
+            count = static_cast<int>(std::count(nav_hits_.begin(), nav_hits_.end(), true));
+        }
+        if (count < 3 || now - nav_last_replan_ < 1.5) continue;
+        // 막힘 확정 → 멈추고 다시 계획
+        nav_own_cancel_until_ = now + 2.0;
+        v2_.cancel_path();
+        std::vector<Pt> remaining;
+        for (size_t i = 0; i < goals.size(); ++i)
+            if (i >= goal_at.size() || goal_at[i] >= index) remaining.push_back(goals[i]);
+        if (remaining.empty()) remaining.push_back(goals.back());
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            for (const auto& h : hits) nav_temp_.emplace_back(h, now + 20.0);  // 막힌 점은 20 초 기억
+            obs = live_obstacles_locked(now);
+        }
+        std::shared_ptr<const OccGrid> g;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            g = grid_;
+        }
+        PlanResult r = plan_path(g.get(), obs, here, remaining, plan_config);
+        std::lock_guard<std::mutex> lk(mu_);
+        nav_last_replan_ = now;
+        nav_.obstacles.clear();
+        for (const auto& h : hits) nav_.obstacles.push_back(h);
+        if (!r.ok) {
+            nav_.phase = "blocked";
+            nav_.message = "우회 경로 없음 — 다시 그려 주세요 (" + r.reason + ")";
+            events_.add("장애물 감지, " + nav_.message);
+            continue;
+        }
+        ++nav_.replans;
+        nav_.phase = "replanning";
+        nav_.message = "장애물 감지 → 우회 경로로 바꾸는 중";
+        nav_pending_path_ = r.path;
+        nav_pending_since_ = now;
+        nav_goal_at_ = r.goal_at;
+        nav_.goals = remaining;
+        events_.add(fmt("장애물 감지(%zu점) → 우회 경로 %zu점 계획", hits.size(), r.path.size()));
+    }
 }
 
 }  // namespace hg

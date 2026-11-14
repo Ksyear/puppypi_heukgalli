@@ -7,11 +7,7 @@
 #include <chrono>
 #include <cstring>
 
-#define STB_IMAGE_IMPLEMENTATION
-#define STBI_ONLY_JPEG
-#define STBI_MAX_DIMENSIONS 4096  // 받은 JPEG 가 터무니없이 크면 풀지 않는다(메모리 보호)
-#define STBI_NO_STDIO
-#include "stb_image.h"
+#include "image_decode.hpp"
 
 namespace hg {
 
@@ -34,20 +30,18 @@ void JpegDecoder::loop() {
         uint64_t seq = 0;
         if (now_s() - last >= min_gap && src_(jpeg, rx, seq) && seq != done_seq_) {
             double t0 = now_s();
-            int w = 0, h = 0, n = 0;
-            unsigned char* px = stbi_load_from_memory(reinterpret_cast<const unsigned char*>(jpeg.data()),
-                                                      static_cast<int>(jpeg.size()), &w, &h, &n, 4);
+            int w = 0, h = 0;
+            std::vector<uint8_t> px;
             done_seq_ = seq;
             last = t0;
-            if (px) {
+            if (decode_image(jpeg, 4, px, w, h)) {
                 std::lock_guard<std::mutex> lk(mu_);
-                rgba_.assign(px, px + static_cast<size_t>(w) * h * 4);
+                rgba_.swap(px);
                 w_ = w;
                 h_ = h;
                 rx_ = rx;
                 seq_ = seq;
                 fresh_ = true;
-                stbi_image_free(px);
             }
             decode_ms_ = (now_s() - t0) * 1000.0;
         } else {

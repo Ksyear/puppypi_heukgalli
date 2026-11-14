@@ -7,11 +7,15 @@ Every server binds on --host:
   UDP 5001  Protocol v2 control + ACK   real V2Session (protocol_v2.py) and PathFollower (path_follower.py)
   UDP 5002  discovery                   real make_reply() from discovery.py (broadcasts arrive only with --host 0.0.0.0)
   TCP 8090  media_server JSON           /api/media /api/map /api/status /api/path  (+ a tiny viewer at /)
+            mock test hooks             /mock/obstacle?x=&y=&r=  /mock/obstacles  /mock/obstacles/clear  /mock/pose
   TCP 8080  web_video_server MJPEG      /stream and /snapshot, topic=/usb_cam/image_raw or /lidar_map/image
-  TCP 9090  rosbridge v2 subset         call_service, advertise/publish, subscribe/unsubscribe (plain WebSocket)
+  TCP 9090  rosbridge v2 subset         call_service, advertise/publish, subscribe/unsubscribe (plain WebSocket),
+                                        subscribe "compression":"png" like rosbridge_library (needs Pillow)
 
 The robot pose (map frame, +x forward, +y left, origin = start) integrates the commanded velocity at 50 Hz
-inside a fixed fake 6.5 x 4 m room with one box. JPEGs come from mock_assets.py (Pillow in tools/.venv, else sips).
+inside a fixed fake 6.5 x 4 m room with one box. /scan ray-casts the room, the box and the dynamic obstacles
+added with /mock/obstacle; /map (OccupancyGrid, latched, 0.5 Hz) has the room and the box only.
+JPEGs come from mock_assets.py (Pillow in tools/.venv, else sips).
 This is a simulation: passing a test against it says nothing about the real robot, Quest or Wi-Fi.
 Ctrl+C stops it.
 """
@@ -19,6 +23,7 @@ Ctrl+C stops it.
 import argparse
 import base64
 import hashlib
+import io
 import json
 import math
 import os
@@ -58,6 +63,9 @@ MAP_W, MAP_H, MAP_LEFT, MAP_BOTTOM, MAP_PPM = 300, 200, -1.75, -2.5, 40.0
 # LaserScan like the LD06 driver: 450 beams, counter-clockwise, 0 rad = robot forward
 SCAN_BEAMS, SCAN_ANGLE_MIN, SCAN_INC = 450, -math.pi, 2 * math.pi / 450
 SCAN_RANGE_MIN, SCAN_RANGE_MAX = 0.02, 12.0
+# /map OccupancyGrid like lidar_mapper: 600 x 600 cells of 0.05 m, origin (-15, -15), row 0 at the origin's y
+GRID_W, GRID_H, GRID_RES, GRID_X0, GRID_Y0, GRID_WALL_M = 600, 600, 0.05, -15.0, -15.0, 0.1
+OBSTACLE_R = 0.12  # default radius of a /mock/obstacle
 
 ACTION_SECONDS = 2.0
 BLOCKED_ACTIONS = {"2_legs_stand"}
@@ -65,9 +73,10 @@ POSE_FIELDS = ("roll", "pitch", "yaw", "height", "x_shift", "stance_x", "stance_
 STAND = dict(roll=0.0, pitch=0.0, yaw=0.0, height=-10.0, x_shift=-0.5, stance_x=0.0, stance_y=0.0, run_time=500)
 
 TOPICS = [("/scan", "sensor_msgs/msg/LaserScan"), ("/lidar_map/pose", "geometry_msgs/msg/PoseStamped"),
+          ("/map", "nav_msgs/msg/OccupancyGrid"),
           ("/puppy_control/status", "std_msgs/msg/String"), ("/puppy_control/arbiter_state", "std_msgs/msg/String"),
           ("/puppy_control/pose", "puppy_control/msg/Pose")]
-LATCHED = ("/puppy_control/status", "/puppy_control/arbiter_state")  # sent once right after subscribe
+LATCHED = ("/puppy_control/status", "/puppy_control/arbiter_state", "/map")  # sent once right after subscribe
 SERVICES = ["/puppy_control/go_home", "/puppy_control/runActionGroup", "/puppy_control/emergency_stop",
             "/puppy_control/reset_estop", "/lidar_mapper/save_map", "/lidar_mapper/reset_map",
             "/rosapi/topics", "/rosapi/services"]
@@ -119,20 +128,32 @@ def wrap(a):
     return math.atan2(math.sin(a), math.cos(a))
 
 
-def is_free(x, y):
+def touching(x, y, obstacles=()):
+    """What the robot disc at (x, y) would touch: "wall", "box", "obstacle", or None when it is free there."""
     x0, y0, x1, y1 = ROOM
     r = ROBOT_RADIUS
     if not (x0 + r <= x <= x1 - r and y0 + r <= y <= y1 - r):
-        return False
+        return "wall"
     dx = max(BOX[0] - x, 0.0, x - BOX[2])
     dy = max(BOX[1] - y, 0.0, y - BOX[3])
-    return math.hypot(dx, dy) >= r
+    if math.hypot(dx, dy) < r:
+        return "box"
+    for ox, oy, orad in obstacles:
+        if math.hypot(x - ox, y - oy) < r + orad:
+            return "obstacle"
+    return None
 
 
-def ray_range(px, py, ang):
-    """Distance from (px, py) inside the room to the first wall or box face along ang."""
+def ray_range(px, py, ang, obstacles=()):
+    """Distance from (px, py) inside the room to the first wall, box face or obstacle circle along ang."""
     dx, dy = math.cos(ang), math.sin(ang)
     t = math.inf
+    for ox, oy, r in obstacles:  # nearest ray/circle hit in front of the sensor (a sensor inside a circle ignores it)
+        fx, fy = px - ox, py - oy
+        b = fx * dx + fy * dy
+        disc = b * b - (fx * fx + fy * fy - r * r)
+        if disc >= 0 and -b - math.sqrt(disc) > 0:
+            t = min(t, -b - math.sqrt(disc))
     x0, y0, x1, y1 = ROOM
     if dx > 1e-12:
         t = min(t, (x1 - px) / dx)
@@ -153,6 +174,23 @@ def ray_range(px, py, ang):
         if tmin > tmax:
             return t
     return min(t, tmin) if tmin > 0 else t
+
+
+def occupancy_grid():
+    """/map data, row-major from the origin corner: room inside 0 (seen, free), walls and box 100, rest -1."""
+    data = [-1] * (GRID_W * GRID_H)
+
+    def fill(x0, y0, x1, y1, value):  # cells covering [x0, x1) x [y0, y1); the room edges fall on cell edges
+        c0, c1 = (int(round((v - GRID_X0) / GRID_RES)) for v in (x0, x1))
+        r0, r1 = (int(round((v - GRID_Y0) / GRID_RES)) for v in (y0, y1))
+        for row in range(r0, r1):
+            data[row * GRID_W + c0:row * GRID_W + c1] = [value] * (c1 - c0)
+
+    x0, y0, x1, y1 = ROOM
+    fill(x0 - GRID_WALL_M, y0 - GRID_WALL_M, x1 + GRID_WALL_M, y1 + GRID_WALL_M, 100)
+    fill(x0, y0, x1, y1, 0)
+    fill(*BOX, 100)
+    return data
 
 
 def ros_stamp(t=None):
@@ -194,6 +232,10 @@ class MockRobot:
         self.scan, self.scan_pts, self.scan_t = None, None, 0.0
         self.trail = [(0.0, 0.0)]
         self.bumped = False
+        self.collided, self.collided_with = False, None  # any contact since start or the last reset_map
+        self.obstacles = []  # dynamic (x, y, r) circles in the map frame: in /scan and collisions, not in /map
+        self.grid = occupancy_grid()  # /map data, fixed
+        self.pil = mock_assets.load_pillow()  # PIL.Image for rosbridge png compression, or None
         self.estop_sources = set()  # "vr" (Protocol v2 event) and/or "service" (/puppy_control/emergency_stop)
         self.action, self.action_until = None, 0.0
         self.preempt_seq, self.preempt_reason = 0, None
@@ -232,6 +274,7 @@ class MockRobot:
         log("v2 limits: forward %.1f cm/s, reverse %.1f cm/s, yaw %.2f rad/s, watchdog %.2f s, lease %.1f s"
             % (MAX_FORWARD_CM_S, MAX_REVERSE_CM_S, MAX_YAW_RAD_S, COMMAND_TIMEOUT_S, LEASE_TIMEOUT_S))
         log("jpeg backend: %s" % (self.encoder.name if self.encoder else "none (video endpoints answer 503)"))
+        log("rosbridge png compression: %s" % ("pillow" if self.pil else "unavailable, Pillow missing (sent uncompressed)"))
 
     def shutdown(self):
         self.stop.set()
@@ -460,10 +503,11 @@ class MockRobot:
         mid = th + yaw_rate * dt / 2
         v = x_cm / 100.0
         nx, ny = x + v * math.cos(mid) * dt, y + v * math.sin(mid) * dt
-        if v and not is_free(nx, ny):
+        hit = touching(nx, ny, self.obstacles) if v else None
+        if hit:
             if not self.bumped:
-                log("sim: touching a wall/box at x=%.2f y=%.2f, translation blocked" % (x, y))
-            self.bumped = True
+                log("sim: touching the %s at x=%.2f y=%.2f, translation blocked" % (hit, x, y))
+            self.bumped, self.collided, self.collided_with = True, True, hit
             nx, ny = x, y
         elif v:
             self.bumped = False
@@ -475,7 +519,7 @@ class MockRobot:
         self.lidar_pose, self.lidar_pose_t = self.pose, now
         ranges = []
         for i in range(SCAN_BEAMS):
-            r = ray_range(x, y, th + SCAN_ANGLE_MIN + i * SCAN_INC)
+            r = ray_range(x, y, th + SCAN_ANGLE_MIN + i * SCAN_INC, self.obstacles)
             ranges.append(r if r <= SCAN_RANGE_MAX else 0.0)
         self.scan, self.scan_t = ranges, now
         self.scan_pts = self.pf.scan_to_points(ranges, SCAN_ANGLE_MIN, SCAN_INC, SCAN_RANGE_MIN, SCAN_RANGE_MAX)
@@ -512,6 +556,37 @@ class MockRobot:
         self.scans = self.integrations = 0
         self.map_session = time.strftime("%Y%m%d_%H%M%S")
         self.map_info_rx = -1e9  # new map info on the next tick
+        self.bumped, self.collided, self.collided_with = False, False, None
+
+    # ── test hooks (HTTP 8090 /mock/*), the real robot has none of these ──
+
+    def obstacle_list(self):
+        with self.lock:
+            return {"frame": "map", "obstacles": [{"x": x, "y": y, "r": r} for x, y, r in self.obstacles]}
+
+    def add_obstacle(self, x, y, r):
+        with self.lock:
+            self.obstacles.append((x, y, r))
+            n = len(self.obstacles)
+            on_robot = touching(self.pose[0], self.pose[1], [(x, y, r)]) == "obstacle"
+        log("mock: obstacle %d added at x=%.2f y=%.2f r=%.2f%s" % (
+            n, x, y, r, " (overlaps the robot: it can only turn until cleared)" if on_robot else ""))
+        return self.obstacle_list()
+
+    def clear_obstacles(self):
+        with self.lock:
+            n = len(self.obstacles)
+            self.obstacles = []
+        log("mock: %d obstacle(s) cleared" % n)
+        return dict(self.obstacle_list(), removed=n)
+
+    def mock_pose(self):
+        """True simulated pose (not /lidar_map/pose) and the contact flags."""
+        with self.lock:
+            x, y, th = self.pose
+            return {"frame": "map", "x": round(x, 4), "y": round(y, 4), "yaw": round(th, 4),
+                    "collided": self.collided, "collided_with": self.collided_with, "touching": self.bumped,
+                    "mock": True}
 
     # ── state views (JSON shapes of media_server.py / receiver_node.py) ──
 
@@ -606,7 +681,7 @@ class MockRobot:
                 return True, {"success": True, "message": "mock: map not written to disk"}
             if service == "/lidar_mapper/reset_map":
                 self._reset_map()
-                log("reset_map: pose back to origin, trail cleared, session %s" % self.map_session)
+                log("reset_map: pose back to origin, trail and collided flag cleared, session %s" % self.map_session)
                 return True, {"success": True, "message": "map reset, session %s" % self.map_session}
             if service == "/rosapi/topics":
                 return True, {"topics": [t for t, _ in TOPICS], "types": [k for _, k in TOPICS]}
@@ -625,11 +700,18 @@ class MockRobot:
             posture = dict(self.posture)
         log("/puppy_control/pose <- %s" % json.dumps(posture))
 
-    def topic_messages(self, topics, slow):
-        """Current message for each wanted topic. slow=True adds the 2 Hz String topics."""
+    def topic_messages(self, topics, slow, map_due=False):
+        """Current message for each wanted topic. slow=True adds the 2 Hz String topics, map_due=True /map."""
         out = {}
         with self.lock:
             stamp = ros_stamp()
+            if map_due and "/map" in topics:
+                out["/map"] = {
+                    "header": {"stamp": stamp, "frame_id": "map"},
+                    "info": {"map_load_time": stamp, "resolution": GRID_RES, "width": GRID_W, "height": GRID_H,
+                             "origin": {"position": {"x": GRID_X0, "y": GRID_Y0, "z": 0.0},
+                                        "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}}},
+                    "data": self.grid}
             if "/scan" in topics and self.scan:
                 out["/scan"] = {
                     "header": {"stamp": stamp, "frame_id": "laser"},
@@ -661,7 +743,7 @@ class MockRobot:
                 wanted |= c.topics()
             if not wanted:
                 continue
-            msgs = self.topic_messages(wanted, slow=(n % 5 == 0))
+            msgs = self.topic_messages(wanted, slow=(n % 5 == 0), map_due=(n % 20 == 0))  # /map every 2.0 s
             texts = {t: json.dumps({"op": "publish", "topic": t, "msg": m}) for t, m in msgs.items()}
             for c in conns:
                 c.offer(texts)
@@ -723,6 +805,23 @@ def make_media_handler(robot):
                 return self._send(200, robot.api_status())
             if path == "/api/path":
                 return self._send(200, robot.api_path())
+            if path == "/mock/obstacle":
+                q = parse_qs(urlsplit(self.path).query)
+                try:
+                    x, y = float(q["x"][0]), float(q["y"][0])
+                    r = float(q.get("r", [OBSTACLE_R])[0])
+                    if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(r) and r > 0):
+                        raise ValueError
+                except (KeyError, ValueError):
+                    return self._send(400, {"error": "need x=<m>&y=<m> (map frame) and optional r=<m> > 0, "
+                                                     "default r %.2f" % OBSTACLE_R})
+                return self._send(200, robot.add_obstacle(x, y, r))
+            if path == "/mock/obstacles":
+                return self._send(200, robot.obstacle_list())
+            if path == "/mock/obstacles/clear":
+                return self._send(200, robot.clear_obstacles())
+            if path == "/mock/pose":
+                return self._send(200, robot.mock_pose())
             return self._send(404, {"error": "not found", "see": "/api/media"})
     return H
 
@@ -800,6 +899,18 @@ WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 WS_MAX_MESSAGE = 1 << 20
 
 
+def png_message(image_module, text):
+    """rosbridge_library pngcompression.encode: the UTF-8 JSON text as the pixels of an RGB PNG, padded with
+    b"\\n", base64 (standard) in {"op": "png", "data": ...}."""
+    raw = text.encode("utf-8")
+    width = math.floor(math.sqrt(len(raw) / 3.0))
+    height = math.ceil((len(raw) / 3.0) / width)
+    raw += b"\n" * (width * height * 3 - len(raw))
+    buf = io.BytesIO()
+    image_module.frombytes("RGB", (width, height), raw).save(buf, "png")
+    return json.dumps({"op": "png", "data": base64.standard_b64encode(buf.getvalue()).decode("ascii")})
+
+
 class RosbridgeServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -816,7 +927,7 @@ class WsConn:
         self.peer = "%s:%d" % addr[:2]
         self.rfile = sock.makefile("rb")
         self.send_lock = threading.Lock()
-        self.subs, self.subs_lock = {}, threading.Lock()  # topic -> [throttle_s, last_sent]
+        self.subs, self.subs_lock = {}, threading.Lock()  # topic -> [throttle_s, last_sent, compression]
 
     # framing
 
@@ -940,10 +1051,10 @@ class WsConn:
                 sub = self.subs.get(topic)
                 if sub and now - sub[1] >= sub[0]:
                     sub[1] = now
-                    due.append(text)
+                    due.append((text, sub[2]))
         try:
-            for text in due:
-                self.send_json(text)
+            for text, compression in due:
+                self.send_json(png_message(self.robot.pil, text) if compression == "png" else text)
         except OSError:
             self.close()
 
@@ -974,14 +1085,23 @@ class WsConn:
         elif op == "subscribe":
             throttle = msg.get("throttle_rate") or 0
             throttle = throttle / 1000.0 if isinstance(throttle, (int, float)) else 0.0
+            compression = msg.get("compression") or "none"
+            if compression == "png" and self.robot.pil is None:
+                log("rosbridge %s: compression png on %s needs Pillow, sending uncompressed" % (self.peer, topic))
+                compression = "none"
+            elif compression not in ("none", "png"):
+                log("rosbridge %s: compression %r not supported by the mock, sending uncompressed"
+                    % (self.peer, compression))
+                compression = "none"
             with self.subs_lock:
-                self.subs[topic] = [throttle, -1e9]
+                self.subs[topic] = [throttle, -1e9, compression]
             known = topic in dict(TOPICS) and topic != "/puppy_control/pose"
-            log("rosbridge %s: subscribe %s throttle_rate=%s ms%s"
-                % (self.peer, topic, msg.get("throttle_rate", 0), "" if known else " (mock never publishes it)"))
+            log("rosbridge %s: subscribe %s throttle_rate=%s ms compression=%s%s"
+                % (self.peer, topic, msg.get("throttle_rate", 0), compression,
+                   "" if known else " (mock never publishes it)"))
             if topic in LATCHED:  # TRANSIENT_LOCAL on the robot: current value right away
                 text = json.dumps({"op": "publish", "topic": topic,
-                                   "msg": self.robot.topic_messages({topic}, slow=True)[topic]})
+                                   "msg": self.robot.topic_messages({topic}, slow=True, map_due=True)[topic]})
                 self.offer({topic: text})
         elif op == "unsubscribe":
             with self.subs_lock:

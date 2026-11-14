@@ -1,5 +1,6 @@
 // 흑갈리 화면 앱: 입력(패드·터치·기울기) → 로봇, 로봇 상태 → 화면·진동.
 #pragma once
+#include <functional>
 #include <future>
 #include <string>
 #include <vector>
@@ -17,6 +18,12 @@ struct ID3D11Device;
 struct ID3D11DeviceContext;
 
 namespace hg {
+
+// 화면 문구 도우미(ui.cpp)
+const char* state_label(const std::string& st);
+const char* reason_label(const std::string& r);
+const char* path_label(const std::string& st);
+std::string time_tag();
 
 struct Settings {
     std::string last_host;
@@ -53,16 +60,19 @@ private:
     void estop_all();
     // 화면
     void draw(double now, const RobotSnapshot& s);
-    void draw_status_bar(double now, const RobotSnapshot& s);
-    void draw_left_rail(const RobotSnapshot& s);
-    void draw_right_rail(double now, const RobotSnapshot& s);
-    void draw_events();
+    void draw_overlay(double now, const RobotSnapshot& s);    // 나브 필·캡슐·텔레메트리·FAB·비상정지·토스트
+    void draw_fabs(double now, const RobotSnapshot& s);
+    void draw_pose_sheet(const RobotSnapshot& s);
     void draw_drive(double now, const RobotSnapshot& s);
     void draw_map(double now, const RobotSnapshot& s);
+    void update_grid_texture(const RobotSnapshot& s);
     void draw_robot(const RobotSnapshot& s);
     void draw_log(double now, const RobotSnapshot& s);
     void draw_connect(const RobotSnapshot& s);
-    void draw_radar(const RobotSnapshot& s, float cx, float cy, float radius, float alpha);
+    void draw_radar(const RobotSnapshot& s, float cx, float cy, float radius);
+    void draw_scan_points(ImDrawList* dl, const std::vector<std::pair<float, float>>& pts, const Pose2D& pose, bool stale,
+                          const std::function<ImVec2(double, double)>& to_screen);
+    void ensure_sprite();
     bool estop_button(double now, const RobotSnapshot& s, float w, float h);
     void connect_to(const std::string& host);
     void update_textures();
@@ -78,8 +88,8 @@ private:
     Gamepad pad_;
     TiltSensor tilt_;
     TiltDrive tilt_drive_;
-    JpegDecoder cam_dec_, map_dec_;
-    Texture cam_tex_, map_tex_;
+    JpegDecoder cam_dec_;
+    Texture cam_tex_;
     std::vector<uint8_t> scratch_;
 
     Screen screen_ = Screen::Connect;
@@ -102,9 +112,24 @@ private:
     std::string prev_path_state_, prev_result_, prev_reject_;
     double last_reject_rumble_ = 0;
     // 지도 스케치
-    std::vector<Pt> stroke_px_;   // 이미지 픽셀
-    std::vector<Pt> preview_m_;   // 단순화된 경로(m)
-    int map_zoom_ = 1;
+    std::vector<Pt> stroke_m_;    // 손가락으로 그린 선(지도 좌표)
+    std::vector<Pt> preview_m_;   // 단순화한 경유점(m)
+    PlanResult plan_preview_;     // 장애물을 피한 실제 보낼 경로
+    bool drawing_ = false;
+    int map_mode_ = 0;            // 0 자동(로봇 옆에서 시작하면 그리기), 1 이동, 2 그리기
+    bool draw_gesture_ = false;
+    bool map_follow_ = true;
+    double map_cx_ = 0, map_cy_ = 0, map_ppm_ = 0;  // 보기 중심(m), 배율(px/m)
+    Texture grid_tex_;
+    uint64_t grid_tex_version_ = 0;
+    Texture sprite_tex_;          // 스캔 점용 방사형 점(32×32)
+    double map_ppm_target_ = 0;   // 확대 단계(보간 목표)
+    // v2 화면 상태
+    float nav_anim_x_ = 0;
+    double last_draw_ = 0;
+    bool sheet_pose_ = false, sheet_map_more_ = false;
+    int connect_tab_ = 0;         // 0 연결, 1 설정
+    bool map_hint_shown_ = false;
     bool confirm_reset_map_ = false;
     double confirm_reset_until_ = 0;
     bool events_open_ = false;

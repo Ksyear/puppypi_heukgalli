@@ -30,7 +30,7 @@ ifeq ($(OS),Windows_NT)
   WINDOWS := 1
 endif
 
-CORE := json util sock net rosbridge v2client discovery path_tools robot
+CORE := json util sock net rosbridge v2client discovery path_tools robot image_decode lidar planner
 CORE_OBJ := $(addprefix $(BUILD)/core/,$(addsuffix .o,$(CORE)))
 
 ifeq ($(WINDOWS),1)
@@ -49,7 +49,7 @@ endif
 
 IMGUI := imgui imgui_draw imgui_tables imgui_widgets imgui_impl_win32 imgui_impl_dx11
 IMGUI_OBJ := $(addprefix $(BUILD)/imgui/,$(addsuffix .o,$(IMGUI)))
-WIN := app_main gamepad tilt textures ui theme widgets
+WIN := app_main gamepad tilt textures ui ui_draw theme widgets
 WIN_OBJ := $(addprefix $(BUILD)/win/,$(addsuffix .o,$(WIN)))
 APP_LIBS := -ld3d11 -ld3dcompiler -ldxgi -lxinput1_4 -lsensorsapi -lole32 -loleaut32 -luuid -lpropsys \
             -luser32 -lgdi32 -ldwmapi -limm32 -lwinmm -lshell32 -mwindows

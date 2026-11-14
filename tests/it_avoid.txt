@@ -1,0 +1,23 @@
+# 통합 시험: LiDAR 지도 + 장애물 회피(가짜 로봇에 /map 과 동적 장애물이 있어야 한다)
+expect v2 idle 3
+expect map 10
+http /mock/obstacles/clear
+# 1) 경로 위에 이미 있는 장애물: 보내기 전에 돌아가는 경로를 만든다
+http /mock/obstacle?x=1.0&y=0.0&r=0.15
+wait 1.0
+go 2.0,0
+nav
+expect nav done 90
+expect http /mock/pose "collided": false
+# 2) 가는 도중 경로 위에 새 장애물: 스캔으로 찾아 다시 계획한다
+http /mock/obstacles/clear
+go 0.2,0.2
+expect nav done 90
+go 3.0,0.2
+wait 1.5
+http /mock/obstacle?x=1.9&y=0.2&r=0.15
+expect replans 1 15
+expect nav done 90
+nav
+expect http /mock/pose "collided": false
+http /mock/obstacles/clear

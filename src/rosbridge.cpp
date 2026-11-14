@@ -1,5 +1,6 @@
 #include "rosbridge.hpp"
 
+#include "image_decode.hpp"
 #include "net.hpp"
 #include "util.hpp"
 
@@ -36,16 +37,34 @@ std::string RosBridge::status() const {
     return status_;
 }
 
+Json RosBridge::subscribe_msg(const std::string& topic, const Sub& s) const {
+    Json m = Json::object();
+    m.set("op", "subscribe").set("topic", topic).set("type", s.type);
+    if (s.throttle_ms > 0) m.set("throttle_rate", s.throttle_ms);
+    if (!s.compression.empty()) m.set("compression", s.compression);
+    return m;
+}
+
 void RosBridge::subscribe(const std::string& topic, const std::string& type, TopicFn fn, int throttle_ms) {
+    Sub sub{type, std::move(fn), throttle_ms, nullptr, ""};
     {
         std::lock_guard<std::mutex> lk(mu_);
-        subs_[topic] = Sub{type, std::move(fn), throttle_ms};
+        subs_[topic] = sub;
+    }
+    if (connected_) send_text(subscribe_msg(topic, sub).dump());
+}
+
+void RosBridge::subscribe_raw(const std::string& topic, const std::string& type, RawFn fn, int throttle_ms,
+                              const std::string& compression) {
+    Sub sub{type, nullptr, throttle_ms, std::move(fn), compression};
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        subs_[topic] = sub;
     }
     if (connected_) {
-        Json m = Json::object();
-        m.set("op", "subscribe").set("topic", topic).set("type", type);
-        if (throttle_ms > 0) m.set("throttle_rate", throttle_ms);
-        send_text(m.dump());
+        // 같은 토픽을 다른 옵션으로 다시 구독할 때는 먼저 끊는다(rosbridge 는 구독 옵션을 합친다)
+        send_text(Json::object().set("op", "unsubscribe").set("topic", topic).dump());
+        send_text(subscribe_msg(topic, sub).dump());
     }
 }
 
@@ -191,7 +210,46 @@ bool RosBridge::recv_frame(sock_t fd, int& op, std::string& payload) {
     }
 }
 
-void RosBridge::on_message(const std::string& text) {
+// 텍스트에서 "key":"value" 의 value 를 빠르게 찾는다(큰 메시지를 다 해석하기 전에 토픽을 알기 위해)
+static std::string quick_field(const std::string& text, const char* key, size_t limit = 512) {
+    std::string k = std::string("\"") + key + "\"";
+    size_t p = text.find(k);
+    if (p == std::string::npos || p > limit) return "";
+    p = text.find(':', p + k.size());
+    if (p == std::string::npos) return "";
+    p = text.find('"', p);
+    if (p == std::string::npos) return "";
+    size_t e = text.find('"', p + 1);
+    return e == std::string::npos ? "" : text.substr(p + 1, e - p - 1);
+}
+
+void RosBridge::on_message(const std::string& text, int depth) {
+    std::string op = quick_field(text, "op", 64);
+    if (op == "png" && depth == 0) {  // {"op":"png","data":"<base64 PNG>"} → 원래 메시지
+        std::string data = quick_field(text, "data", 64), inner;
+        // quick_field 는 짧은 범위만 보므로 data 는 직접 찾는다
+        size_t p = text.find("\"data\"");
+        if (p != std::string::npos) {
+            size_t a = text.find('"', text.find(':', p) + 1), b = text.find('"', a + 1);
+            if (a != std::string::npos && b != std::string::npos) data = text.substr(a + 1, b - a - 1);
+        }
+        if (rosbridge_png_to_text(data, inner)) on_message(inner, depth + 1);
+        return;
+    }
+    if (op == "publish") {
+        std::string topic = quick_field(text, "topic", 4096);
+        RawFn raw;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            auto it = subs_.find(topic);
+            if (it != subs_.end()) raw = it->second.raw;
+        }
+        if (raw) {
+            ++rx_;
+            raw(text);
+            return;
+        }
+    }
     Json m;
     try {
         m = Json::parse(text);
@@ -199,7 +257,7 @@ void RosBridge::on_message(const std::string& text) {
         return;
     }
     ++rx_;
-    std::string op = m["op"].as_string();
+    op = m["op"].as_string();
     if (op == "publish") {
         TopicFn fn;
         {
@@ -256,12 +314,7 @@ void RosBridge::loop() {
             }
             for (const auto& a : ads)
                 send_text(Json::object().set("op", "advertise").set("topic", a.first).set("type", a.second).dump());
-            for (const auto& s : subs) {
-                Json m = Json::object();
-                m.set("op", "subscribe").set("topic", s.first).set("type", s.second.type);
-                if (s.second.throttle_ms > 0) m.set("throttle_rate", s.second.throttle_ms);
-                send_text(m.dump());
-            }
+            for (const auto& s : subs) send_text(subscribe_msg(s.first, s.second).dump());
             int op = 0;
             std::string payload;
             while (running_ && recv_frame(fd, op, payload)) {

@@ -16,6 +16,7 @@ class RosBridge {
 public:
     using TopicFn = std::function<void(const Json& msg)>;
     using ServiceFn = std::function<void(bool ok, const Json& values)>;
+    using RawFn = std::function<void(const std::string& message_json)>;  // 큰 메시지(/map)를 직접 해석할 때
 
     RosBridge(std::string host, uint16_t port = 9090);
     ~RosBridge();
@@ -26,6 +27,9 @@ public:
 
     // throttle_ms: rosbridge 가 이 간격 안에 온 메시지를 버린다(0 = 모두)
     void subscribe(const std::string& topic, const std::string& type, TopicFn fn, int throttle_ms = 0);
+    // compression: "" 또는 "png"(rosbridge 가 JSON 을 PNG 에 담아 보냄, 큰 지도의 대역폭을 줄인다)
+    void subscribe_raw(const std::string& topic, const std::string& type, RawFn fn, int throttle_ms = 0,
+                       const std::string& compression = "");
     void unsubscribe(const std::string& topic);
     void advertise(const std::string& topic, const std::string& type);
     bool publish(const std::string& topic, const Json& msg);
@@ -38,13 +42,16 @@ private:
         std::string type;
         TopicFn fn;
         int throttle_ms;
+        RawFn raw;
+        std::string compression;
     };
+    Json subscribe_msg(const std::string& topic, const Sub& s) const;
     void loop();
     bool handshake(sock_t fd);
     bool send_text(const std::string& text);
     bool send_frame(int op, const std::string& payload);
     bool recv_frame(sock_t fd, int& op, std::string& payload);
-    void on_message(const std::string& text);
+    void on_message(const std::string& text, int depth = 0);
 
     std::string host_;
     uint16_t port_;

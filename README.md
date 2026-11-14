@@ -2,7 +2,7 @@
 
 **ROG Ally X 를 Hiwonder PuppyPi 전용 핸드헬드 리모컨으로 쓰는 C++ 클라이언트 앱.** 스틱·트리거로 데드맨 주행, 손가락으로 지도에 경로를 그려 보내고, 카메라와 LiDAR 레이더 HUD 를 120 Hz 터치 화면에 띄운다. 로봇 소프트웨어는 한 줄도 바꾸지 않는다.
 
-> **English summary.** A Win32 + Direct3D 11 + Dear ImGui 1.93.0 client for a Hiwonder PuppyPi running a team-written ROS 2 stack, built for the ASUS ROG Ally X handheld ("heukgalli", the author's black Ally X on Windows 11). It speaks only the robot's published network interfaces (UDP Protocol v2, rosbridge WebSocket, HTTP MJPEG/JSON); no Hiwonder or team code is included and the robot software is unchanged. Single static exe via MinGW-w64 GCC 16.2, cross-compiled on macOS or built on the Ally with the in-folder toolchain. Core unit tests (63 checks) pass on macOS and compile with MinGW; a 14-step integration script passes against a local mock robot. **Status: not yet run on the Ally, not yet tested with the real robot.** Hardware testing is tracked in `docs/HW_TEST_CHECKLIST.md`.
+> **English summary.** A Win32 + Direct3D 11 + Dear ImGui 1.93.0 client for a Hiwonder PuppyPi running a team-written ROS 2 stack, built for the ASUS ROG Ally X handheld ("heukgalli", the author's black Ally X on Windows 11). It speaks only the robot's published network interfaces (UDP Protocol v2, rosbridge WebSocket, HTTP MJPEG/JSON); no Hiwonder or team code is included and the robot software is unchanged. Single static exe via MinGW-w64 GCC 16.2, cross-compiled on macOS or built on the Ally with the in-folder toolchain. The map screen renders the robot's LiDAR occupancy grid (`/map`) with live scans and plans around obstacles on the app side (A* with robot-size inflation, re-planning when the live scan blocks the path), because the robot itself has no obstacle avoidance. Core unit tests (86 checks) pass on macOS and on the Ally; integration scripts pass against a mock robot on the same Mac (drive 14/14, obstacle avoidance 8/8). **Status: runs on the Ally; not yet tested with the real robot.** Hardware testing is tracked in `docs/HW_TEST_CHECKLIST.md`.
 
 ---
 
@@ -10,10 +10,10 @@
 
 | 항목 | 상태 |
 |---|---|
-| 코어(프로토콜·파서·판단 로직) | macOS clang 에서 단위 시험 63개 통과, MinGW 로도 컴파일됨 |
-| 통합 시험(가짜 로봇, 같은 Mac 루프백) | `tests/it_drive.txt` 14/14 통과 |
+| 코어(프로토콜·파서·LiDAR 지도·경로 계획) | 단위 시험 86개 통과(macOS clang, 흑갈리 MinGW) |
+| 통합 시험(가짜 로봇) | 맥 루프백: `tests/it_drive.txt` 14/14, 장애물 회피 `tests/it_avoid.txt` 8/8 통과. 흑갈리 → 맥(Tailscale): `it_drive` 14/14 통과. `it_avoid` 는 Tailscale 이 도쿄 중계(DERP)로 바뀐 때 UDP 유실 25~56% 로 로봇 watchdog(0.4 s)이 경로를 취소해 3개 실패 — 설계대로 멈춘 것이며 실제 LAN 에서 다시 확인 필요 |
 | Windows 앱 exe | macOS 교차 빌드와 흑갈리 자체 빌드(`build.ps1`) 모두 성공, 경고 0 |
-| 흑갈리에서 실행 | **확인함(가짜 로봇에 연결).** 다섯 화면 표시, 내장 패드 XInput 인식, 화면 120 fps, 흑갈리에서 단위 시험 63개 통과. 진동·터치 스케치·기울기는 아직 사람이 확인하지 않음 |
+| 흑갈리에서 실행 | **확인함(가짜 로봇에 연결).** 다섯 화면 표시, 내장 패드 XInput 인식, 화면 120 fps. 진동·터치 스케치·기울기는 아직 사람이 확인하지 않음 |
 | 실제 로봇 시험 | **아직 안 함.** 사용자가 `docs/HW_TEST_CHECKLIST.md` 로 수행 |
 
 가짜 로봇 시험 통과는 실기 검증이 아니다. 아래 모든 "동작한다" 는 서술은 코드와 가짜 로봇 기준이다.
@@ -22,17 +22,26 @@
 
 흑갈리(ROG Ally X)에서 앱이 직접 저장한 1920×1080 화면이다(F12). **가짜 로봇(`tools/mock_robot.py`)에 연결한 상태**라 카메라는 시험 패턴이고 지도는 가상의 방이다. 주소는 `--privacy` 모드로 가렸다.
 
-| 주행 — 카메라, LiDAR 레이더, 주행 상태 캡슐 | 지도 — 손가락으로 경로 그리기 |
+| LiDAR 지도 — 점유 격자, 실시간 스캔, 그린 길 → 장애물 회피 경로 | 주행 — 전면 카메라, LiDAR 레이더, 주행 상태 캡슐 |
 |---|---|
-| ![주행 화면](docs/screenshots/drive.png) | ![지도 화면](docs/screenshots/map.png) |
+| ![LiDAR 지도](docs/screenshots/map.png) | ![주행 화면](docs/screenshots/drive.png) |
 | **로봇 — 자세 7개, 동작 24개(⚠ 큰 동작은 두 번)** | **로그 — ACK RTT, 유실, 카메라, 화면 fps** |
 | ![로봇 화면](docs/screenshots/robot.png) | ![로그 화면](docs/screenshots/log.png) |
 
-디자인 개편 전후(왼쪽이 기본 ImGui 룩, 오른쪽이 개편 후). 근거와 결정 과정은 [`docs/DESIGN_PLAN_v1.md`](docs/DESIGN_PLAN_v1.md).
+디자인 변천(왼쪽: 첫 버전의 기본 ImGui 룩, 오른쪽: "검은 유리 조종석" v2 — 콘텐츠를 화면 전체에 깔고 조작은 떠 있는 유리 조각으로만). 조사·결정 과정은 [`docs/DESIGN_PLAN_v1.md`](docs/DESIGN_PLAN_v1.md), [`docs/DESIGN_PLAN_v2.md`](docs/DESIGN_PLAN_v2.md).
 
 ![디자인 전후](docs/screenshots/before_after_drive.png)
 
 <!-- TODO: 실제 로봇 장면 GIF(실기 시험 뒤) -->
+
+## LiDAR 지도와 장애물 회피
+
+로봇의 경로 추종기는 경유점(지도 좌표, 최대 20개)을 차례로 따라갈 뿐 장애물을 피하지 않는다. 그래서 회피는 앱이 맡는다(`src/planner.*`, `Robot::nav_loop`).
+
+1. **지도**: 로봇 지도작성 노드의 `/map`(600×600, 5 cm, 2 s 마다)을 rosbridge 로 받는다. 큰 메시지라 PNG 압축으로 받고(가짜 로봇 기준 1.4 MB → 약 10 KB), 정수 배열은 일반 JSON 해석기를 거치지 않고 직접 읽는다. 앱이 점유 칸(빛나는 청록)·빈 칸·모르는 칸을 직접 그린다. `/lidar_map/pose`(10 Hz)와 `/scan` 을 겹쳐 그린다.
+2. **보내기 전**: 손가락으로 그린 선을 경유점으로 단순화한 뒤, 0.10 m 격자에 지도 점유 칸과 실시간 스캔 점을 올려 로봇 크기만큼(0.20 m) 부풀린다. 막힌 구간만 A*(8방향, 벽 가까이는 비싸게)로 돌아가고, 보이는 데까지 건너뛰어 꺾이는 점만 남겨 20개 이하로 줄인다.
+3. **가는 중**: 새 스캔마다 남은 경로 앞쪽 1.6 m 를 감시한다. 장애물이 4번 중 3번 잡히면 `path_cancel` → 막힌 점을 20 초 기억 → 현재 위치에서 남은 경유점까지 다시 계획 → 로봇이 중립으로 돌아오면 새 경로를 보낸다.
+4. **막혔을 때**: 돌아갈 틈이 없으면 멈춘 채 "우회 경로 없음 — 다시 그려 주세요" 를 띄우고 진동으로 알린다. 사용자가 스틱을 쓰거나 비상정지하면 회피 주행은 즉시 끝난다.
 
 ## 왜 Ally X 인가
 
@@ -159,7 +168,7 @@ make CROSS=x86_64-w64-mingw32- BUILD=build-win app   # Windows exe 교차 빌드
 
 ### 단위 시험 (`tests/test_core.cpp`, 외부 프레임워크 없음)
 
-`make test` → **63 checks pass** (macOS clang). MinGW 로도 컴파일된다(`build-win/test_core.exe`). 대상: JSON 파서 왕복·깊이 제한·정수/실수 출력, ACK 8필드 엄격 파싱, `decide_drive()` 전이 표(중립 확인·데드맨·입력 정지·ACK 끊김·estop·timeout 자동 재개·재프레스), 발견 응답 nonce/형식 검증, 지도 픽셀↔미터 변환, RDP 스케치 단순화(직선→2점, L→3점, 지그재그→≤20점), `/api/map`·`/api/path`·`/scan` 파서, UUID/base64/문자열 도구.
+`make test` → **86 checks pass** (macOS clang, 흑갈리에서 `.\\build.ps1 test` 도 같음). LiDAR·계획 시험: 점유 격자 빠른 해석, 쿼터니언→yaw, 스캔→지도 변환, 직선 막힘 우회, 벽 틈 통과, 완전히 막힘 실패, 경유점이 장애물 안이면 실패, 점유 격자 지도 기반 우회, 앞쪽 감시 범위. MinGW 로도 컴파일된다(`build-win/test_core.exe`). 대상: JSON 파서 왕복·깊이 제한·정수/실수 출력, ACK 8필드 엄격 파싱, `decide_drive()` 전이 표(중립 확인·데드맨·입력 정지·ACK 끊김·estop·timeout 자동 재개·재프레스), 발견 응답 nonce/형식 검증, 지도 픽셀↔미터 변환, RDP 스케치 단순화(직선→2점, L→3점, 지그재그→≤20점), `/api/map`·`/api/path`·`/scan` 파서, UUID/base64/문자열 도구.
 
 ### 통합 시험 (가짜 로봇, 같은 Mac 루프백)
 
@@ -169,6 +178,8 @@ export PUPPYPI_ROBOT_SRC=$PWD/PuppyPI_Cpp_ROS2/ros2_ws/src/puppy_vr_bridge
 python3 tools/mock_robot.py                       # UDP 5001/5002, TCP 8080/8090/9090 을 127.0.0.1 에 연다
 ./build/console --host 127.0.0.1 --script tests/it_drive.txt
 ```
+
+`tests/it_avoid.txt`(8/8, 맥 루프백): 경로 위에 미리 놓인 장애물을 피해 도착, 가는 중에 경로 위에 생긴 장애물을 스캔으로 찾아 다시 계획해 도착, 두 경우 모두 가짜 로봇의 충돌 기록 없음.
 
 `tests/it_drive.txt` 는 연결 → 중립 확인 → 주행 → 놓기 → go_home → 자세 → 동작 그룹 → 경로 전송(rotate→drive→done) → 스틱 개입으로 경로 취소 → 비상정지 → 해제 → 지도 저장/새로 → 토픽 목록 → RTT 수집을 차례로 돌리며, **expect 14/14 통과**(실패 시 종료 코드 1).
 
@@ -192,12 +203,13 @@ python3 tools/mock_robot.py                       # UDP 5001/5002, TCP 8080/8090
 - **실제 로봇과는 아직 연결하지 않았다.** 흑갈리에서 D3D11·한글 폰트·내장 패드 인식은 확인했지만, 진동·터치 스케치·기울기 센서와 실제 로봇 동작은 점검표 결과를 기다린다.
 - 가짜 로봇은 팀 모듈을 쓰더라도 시뮬레이션이다. ACK 지연, 경로 운동학, 두 비상정지 latch(v2·rosbridge)의 해제 순서는 실기에서 확인해야 한다(점검표 13번).
 - 인증·암호화 없음. 로봇 인터페이스가 평문 LAN 전제이므로 같은 Wi-Fi 안에서만 쓴다.
-- 로봇은 경로 추종 중 장애물을 피하지 않는다(지도 화면에 상시 표시).
+- 로봇은 경로 추종 중 장애물을 피하지 않는다. 회피는 앱이 맡는다: LiDAR 스캔·지도로 막힘을 판단하고 경로를 취소한 뒤 다시 보낸다. 판단 지연(스캔 4번 중 3번, 약 0.3~0.4 s)과 Wi-Fi 지연 동안 로봇은 계속 움직이므로, 아주 가까이에서 갑자기 나타난 장애물은 피하지 못할 수 있다. 앞쪽 1.6 m 안만 감시한다. 실기 검증 전.
 - ImGui 터치는 단일 터치 드래그만. 핀치 확대 없음(−/+ 버튼).
 - Armoury Crate 가 패드를 데스크톱(마우스/키보드) 모드로 두면 XInput 입력이 없다. M1/M2 뒷버튼 미매핑.
 - 가속도계는 Windows Sensor API 에 노출되지 않을 수 있다. 그 경우 설정에 "가속도계 없음" 으로 뜨고 기능은 꺼진다.
 - ACK `out_of_order` 거절은 표시만 하고 자동 재동기화는 하지 않는다. 사용자가 "연결 끊기 → 연결" 로 새 세션을 만든다.
-- 로봇 쪽 변경이 필요한 것(카메라 해상도/비트레이트, 타임스탬프 동기화, 장애물 회피)은 범위 밖.
+- 로봇 쪽 변경이 필요한 것(카메라 해상도/비트레이트, 타임스탬프 동기화, 로봇 자체의 장애물 회피)은 범위 밖.
+- 지도 PNG 압축(`compression:"png"`)을 로봇 rosbridge 가 지원하지 않으면 8 초 뒤 일반 JSON(약 1.4 MB / 2 s)으로 바꾼다. 실기에서 어느 쪽인지 로그 화면 "지도" 줄에 표시된다.
 - CI 없음. GitHub 공개 여부와 함께 결정 예정.
 
 ## 배운 점 (초안 — 사용자가 다듬을 후보)

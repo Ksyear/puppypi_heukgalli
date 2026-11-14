@@ -125,6 +125,34 @@ std::string base64_encode(const std::string& in) {
     return out;
 }
 
+bool base64_decode(const std::string& in, std::string& out) {
+    static int8_t table[256];
+    static bool init = false;
+    if (!init) {
+        for (int i = 0; i < 256; ++i) table[i] = -1;
+        const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < 64; ++i) table[static_cast<unsigned char>(t[i])] = static_cast<int8_t>(i);
+        init = true;
+    }
+    out.clear();
+    out.reserve(in.size() * 3 / 4);
+    uint32_t acc = 0;
+    int bits = 0;
+    for (unsigned char c : in) {
+        if (c == '=' ) break;
+        if (c == '\n' || c == '\r' || c == ' ' || c == '\t') continue;
+        int v = table[c];
+        if (v < 0) return false;
+        acc = (acc << 6) | static_cast<uint32_t>(v);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out += static_cast<char>((acc >> bits) & 0xFF);
+        }
+    }
+    return true;
+}
+
 void LogRing::add(const std::string& line) {
     std::lock_guard<std::mutex> lk(mu_);
     lines_.push_back(clock_text() + " " + line);

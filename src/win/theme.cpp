@@ -15,9 +15,12 @@ bool exists(const std::string& p) { return GetFileAttributesA(p.c_str()) != INVA
 
 // docs/DESIGN_PLAN_v1.md §3.1 (WCAG 대비 검증값)
 const Tokens T = {
-    hex(0x0B0D10), hex(0x13161B), hex(0x1B2027), hex(0x242A33), hex(0x2E3640),
-    hex(0xF2F4F7), hex(0xA9B1BD), hex(0x6F7987),
-    hex(0xFF6B35), hex(0x3DD68C), hex(0xF5A524), hex(0xE5484D), hex(0xB3261E), hex(0x5B9CFF), hex(0x19C6D1), hex(0x0B0D10),
+    hex(0x0A0C10), hex(0x12161C), hex(0x1A1F27), hex(0x242B35), hex(0xFFFFFF, 20),
+    hex(0xF4F6F8), hex(0xAEB6C2), hex(0x76808E),
+    hex(0xFF6B35), hex(0x3DD68C), hex(0xF5A524), hex(0xE5484D), hex(0xB3261E), hex(0x5B9CFF), hex(0x19C6D1), hex(0x0A0C10),
+    // glass α0.66, glass_hi α0.08, ctl α0.10 / 선택 0.16 / 눌림 0.18
+    hex(0x0E1116, 168), hex(0xFFFFFF, 20), hex(0xFFFFFF, 26), hex(0xFFFFFF, 41), hex(0xFFFFFF, 46),
+    hex(0x4FE3EC), hex(0x19C6D1, 140), hex(0x10151B), hex(0xA8F7FB), hex(0xFF5A5F), hex(0xFFFFFF, 13), hex(0xFFFFFF, 28),
 };
 
 Fonts F;
@@ -108,7 +111,8 @@ void apply_style(float dpi_scale) {
     for (int i = 0; i < ImGuiCol_COUNT; ++i) c[i] = v(T.bg2);
     c[ImGuiCol_Text] = v(T.text1);
     c[ImGuiCol_TextDisabled] = v(T.text3);
-    c[ImGuiCol_WindowBg] = c[ImGuiCol_ChildBg] = v(T.bg0);
+    c[ImGuiCol_WindowBg] = v(T.bg0);
+    c[ImGuiCol_ChildBg] = ImVec4(0, 0, 0, 0);
     c[ImGuiCol_PopupBg] = v(T.bg1);
     c[ImGuiCol_Border] = c[ImGuiCol_Separator] = v(T.line);
     c[ImGuiCol_BorderShadow] = ImVec4(0, 0, 0, 0);

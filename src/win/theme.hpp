@@ -10,14 +10,19 @@ struct Tokens {
     ImU32 bg0, bg1, bg2, bg3, line;
     ImU32 text1, text2, text3;
     ImU32 accent, ok, warn, danger, danger_deep, info, lidar, ink;
+    // v2 "검은 유리 조종석"(docs/DESIGN_PLAN_v2.md §2.2)
+    ImU32 glass, glass_hi, ctl, ctl_on, ctl_down;
+    ImU32 occ, occ_glow, free, scan, scan_near, grid1, grid5;
 };
 extern const Tokens T;
 
 // 글자 크기(논리 px). ImGui::PushFont(font, sz::title) 처럼 쓴다. 동적 글꼴 아틀라스가 크기마다
 // 글리프를 새로 굽기 때문에 이 프리셋만 쓴다.
 namespace sz {
-constexpr float body = 18, label = 15, hint = 14, title = 22, button = 17, num_lg = 28, num_sm = 16, estop = 22, icon = 20,
-                icon_lg = 28;
+// v2 프리셋 9개(동적 아틀라스는 크기마다 글리프를 굽기 때문에 이 값만 쓴다)
+constexpr float display = 44, title = 24, headline = 20, body = 17, label = 15, caption = 14, icon = 20, icon_lg = 28, estop = 22;
+// v1 이름(남은 코드 호환)
+constexpr float hint = caption, button = headline, num_lg = 28, num_sm = 16;
 }
 
 struct Fonts {
@@ -62,6 +67,14 @@ constexpr const char* error = "\xEE\x9E\x83";     // E783 Error
 constexpr const char* lock = "\xEE\x9C\xAE";      // E72E Lock
 constexpr const char* gamepad = "\xEE\x9F\xBC";   // E7FC
 constexpr const char* play = "\xEE\x9D\xA8";      // E768 Play
+constexpr const char* plus = "\xEE\x9C\x90";      // E710 Add
+constexpr const char* minus = "\xEE\x9C\xB8";     // E738 Remove
+constexpr const char* pin = "\xEE\x9C\x87";       // E707 MapPin
+constexpr const char* more = "\xEE\x9C\x92";      // E712 More
+constexpr const char* edit = "\xEE\x9C\x8F";      // E70F Edit
+constexpr const char* move = "\xEE\x9F\x82";      // E7C2 Move
+constexpr const char* flag = "\xEE\x9F\x81";      // E7C1 Flag
+constexpr const char* sliders = "\xEE\xA6\xA9";   // E9E9 Equalizer
 }  // namespace icon
 
 }  // namespace hg::theme

@@ -29,6 +29,7 @@ std::string fmt(const char* f, ...) __attribute__((format(printf, 1, 2)));
 #endif
 
 std::string base64_encode(const std::string& in);
+bool base64_decode(const std::string& in, std::string& out);  // 공백 무시, 잘못된 글자면 false
 
 // 화면 아래 이벤트 창과 sniff 창에 쓰는 고정 길이 기록(스레드 안전)
 class LogRing {
