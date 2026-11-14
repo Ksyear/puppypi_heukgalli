@@ -85,10 +85,18 @@ $(BUILD)/test_core$(EXE): $(BUILD)/tests/test_core.o $(CORE_OBJ)
 $(BUILD)/console$(EXE): $(BUILD)/cli/console.o $(CORE_OBJ)
 	$(CXX) $^ -o $@ $(STATIC) $(SYS_LIBS)
 
-$(BUILD)/puppypi_heukgalli$(EXE): $(WIN_OBJ) $(IMGUI_OBJ) $(CORE_OBJ) $(BUILD)/win/app.res.o
-	$(CXX) $^ -o $@ $(STATIC) $(STRIP) $(APP_LIBS) $(SYS_LIBS)
+# MinGW 드라이버는 기본 manifest(default-manifest.o)를 몰래 함께 링크한다. 흑갈리의 WinLibs 판에서는 이것이
+# app.manifest 와 같은 ID·언어(1, 0x409)로 둘 다 exe 에 남았다(ld: .rsrc merge failure). 같은 이름의 빈 오브젝트를
+# -B 로 먼저 찾게 해 app.manifest(UTF-8 코드페이지, PerMonitorV2) 하나만 남긴다.
+NOMANIFEST := $(BUILD)/win/nomanifest
+$(BUILD)/puppypi_heukgalli$(EXE): $(WIN_OBJ) $(IMGUI_OBJ) $(CORE_OBJ) $(BUILD)/win/app.res.o $(NOMANIFEST)/default-manifest.o
+	$(CXX) $(filter-out $(NOMANIFEST)/%,$^) -o $@ -B$(NOMANIFEST)/ $(STATIC) $(STRIP) $(APP_LIBS) $(SYS_LIBS)
 
-$(BUILD)/win/app.res.o: src/win/app.rc src/win/app.manifest
+$(NOMANIFEST)/default-manifest.o:
+	@mkdir -p $(dir $@)
+	$(CXX) -x c++ -c - -o $@ < /dev/null
+
+$(BUILD)/win/app.res.o: src/win/app.rc src/win/app.manifest src/win/app.ico
 	@mkdir -p $(dir $@)
 	$(CROSS)windres $< -O coff -o $@
 

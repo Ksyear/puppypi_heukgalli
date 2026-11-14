@@ -222,7 +222,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
     ImGui_ImplWin32_EnableDpiAwareness();
     float scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
     WNDCLASSEXW wc = {sizeof(wc), CS_CLASSDC, wnd_proc, 0, 0, inst, LoadIconW(inst, L"APPICON"), LoadCursorW(nullptr, IDC_ARROW),
-                      nullptr, nullptr, L"PuppyPiHeukgalli", nullptr};
+                      nullptr, nullptr, L"PuppyPiHeukgalli",
+                      static_cast<HICON>(LoadImageW(inst, L"APPICON", IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                                    GetSystemMetrics(SM_CYSMICON), 0))};  // 제목 표시줄용 작은 아이콘
     RegisterClassExW(&wc);
     HWND hwnd = CreateWindowW(wc.lpszClassName, L"흑갈리 PuppyPi 조종기", WS_OVERLAPPEDWINDOW, 80, 80,
                               static_cast<int>(1280 * scale), static_cast<int>(720 * scale), nullptr, nullptr, inst, nullptr);

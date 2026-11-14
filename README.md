@@ -1,4 +1,4 @@
-# puppypi_heukgalli
+# <img src="docs/screenshots/app_icon.png" width="40" align="top" alt=""> puppypi_heukgalli
 
 [![CI](https://github.com/Ksyear/puppypi_heukgalli/actions/workflows/ci.yml/badge.svg)](https://github.com/Ksyear/puppypi_heukgalli/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/Ksyear/puppypi_heukgalli?include_prereleases)](https://github.com/Ksyear/puppypi_heukgalli/releases)
 
@@ -187,7 +187,7 @@ python3 tools/mock_robot.py                       # UDP 5001/5002, TCP 8080/8090
 
 `tests/it_drive.txt` 는 연결 → 중립 확인 → 주행 → 놓기 → go_home → 자세 → 동작 그룹 → 경로 전송(rotate→drive→done) → 스틱 개입으로 경로 취소 → 비상정지 → 해제 → 지도 저장/새로 → 토픽 목록 → RTT 수집을 차례로 돌리며, **expect 14/14 통과**(실패 시 종료 코드 1).
 
-`tools/mock_robot.py` 는 Python 표준 라이브러리로 만든 **시험 보조 도구**다(앱 자체는 C++). 실행 시 `--robot-src`(또는 `PUPPYPI_ROBOT_SRC`)가 가리키는 [로봇 저장소](https://github.com/Ksyear/PuppyPI_Cpp_ROS2)의 프로토콜 모듈(`protocol_v2.py`, `path_follower.py`)을 import 해서 조종 규칙의 기준으로 쓴다. 로봇 코드는 이 저장소에 복사하지 않았다. `discovery.py` 가 없으면 문서의 응답 형식으로 대신한다. 자체 시험: `python3 tools/test_mock_robot.py`.
+`tools/mock_robot.py` 는 Python 표준 라이브러리로 만든 **시험 보조 도구**다(앱 자체는 C++). 실행 시 `--robot-src`(또는 `PUPPYPI_ROBOT_SRC`)가 가리키는 [로봇 저장소](https://github.com/Ksyear/PuppyPI_Cpp_ROS2)의 프로토콜 모듈(`protocol_v2.py`, `path_follower.py`)을 import 해서 조종 규칙의 기준으로 쓴다. 로봇 코드는 이 저장소에 복사하지 않았다. `discovery.py` 가 없으면 문서의 응답 형식으로 대신한다. 자체 시험: `python3 tools/test_mock_robot.py`. 앱 아이콘(`src/win/app.ico`, 16–256 px 10장)은 `python3 tools/make_icon.py` 가 의존성 없이 그린다.
 
 ## 측정값
 
