@@ -35,8 +35,12 @@ CORE_OBJ := $(addprefix $(BUILD)/core/,$(addsuffix .o,$(CORE)))
 
 ifeq ($(WINDOWS),1)
   EXE := .exe
-  SYS_LIBS := -lws2_32 -liphlpapi
+  SYS_LIBS := -lws2_32 -liphlpapi -lssp
   STATIC := -static -static-libgcc -static-libstdc++
+  # 보안: 스택 보호, 버퍼 함수 검사, 형식 문자열 검사, CET 표시, ASLR(64비트 고엔트로피)·DEP
+  HARDEN := -fstack-protector-strong -D_FORTIFY_SOURCE=2 -Wformat -Wformat-security -Werror=format-security -fcf-protection=full
+  CXXFLAGS += $(HARDEN)
+  STATIC += -Wl,--dynamicbase,--nxcompat,--high-entropy-va
 else
   EXE :=
   SYS_LIBS := -lpthread
@@ -45,9 +49,9 @@ endif
 
 IMGUI := imgui imgui_draw imgui_tables imgui_widgets imgui_impl_win32 imgui_impl_dx11
 IMGUI_OBJ := $(addprefix $(BUILD)/imgui/,$(addsuffix .o,$(IMGUI)))
-WIN := app_main gamepad tilt textures ui
+WIN := app_main gamepad tilt textures ui theme widgets
 WIN_OBJ := $(addprefix $(BUILD)/win/,$(addsuffix .o,$(WIN)))
-APP_LIBS := -ld3d11 -ld3dcompiler -ldxgi -lxinput -lsensorsapi -lole32 -loleaut32 -luuid -lpropsys \
+APP_LIBS := -ld3d11 -ld3dcompiler -ldxgi -lxinput1_4 -lsensorsapi -lole32 -loleaut32 -luuid -lpropsys \
             -luser32 -lgdi32 -ldwmapi -limm32 -lwinmm -lshell32 -mwindows
 
 .PHONY: all app test console clean
@@ -57,13 +61,15 @@ $(BUILD)/core/%.o: src/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+IMGUI_CFG := -DIMGUI_USER_CONFIG='"hg_imconfig.h"' -Isrc/win
+
 $(BUILD)/imgui/%.o: third_party/imgui/%.cpp
 	@mkdir -p $(dir $@)
-	$(CXX) -std=c++17 -O2 -MMD -MP -Ithird_party/imgui -c $< -o $@
+	$(CXX) -std=c++17 -O2 -MMD -MP $(HARDEN) $(IMGUI_CFG) -Ithird_party/imgui -c $< -o $@
 
 $(BUILD)/win/%.o: src/win/%.cpp
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -DUNICODE -D_UNICODE -Isrc -Ithird_party/imgui -Ithird_party -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(IMGUI_CFG) -DUNICODE -D_UNICODE -Isrc -Ithird_party/imgui -Ithird_party -c $< -o $@
 
 $(BUILD)/tests/%.o: tests/%.cpp
 	@mkdir -p $(dir $@)

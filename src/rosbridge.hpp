@@ -49,7 +49,8 @@ private:
     std::string host_;
     uint16_t port_;
     std::atomic<bool> running_{false}, connected_{false};
-    std::atomic<sock_t> fd_{kBadSock};
+    sock_t fd_ = kBadSock;  // fd_mu_ 로 보호
+    std::mutex fd_mu_;
     std::thread th_;
     mutable std::mutex mu_;      // subs_, ads_, pending_, status_
     std::mutex send_mu_;

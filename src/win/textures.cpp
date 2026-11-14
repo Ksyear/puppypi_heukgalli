@@ -9,6 +9,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
+#define STBI_MAX_DIMENSIONS 4096  // 받은 JPEG 가 터무니없이 크면 풀지 않는다(메모리 보호)
 #define STBI_NO_STDIO
 #include "stb_image.h"
 

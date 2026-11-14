@@ -49,7 +49,7 @@ bool parse_path_status(const Json& j, PathStatus& out) {
 }
 
 bool parse_scan(const Json& msg, ScanData& out) {
-    if (!msg["ranges"].is_array()) return false;
+    if (!msg["ranges"].is_array() || msg["ranges"].size() > 4096) return false;  // LD06 은 450빔
     out.angle_min = msg["angle_min"].as_number();
     out.angle_increment = msg["angle_increment"].as_number();
     out.range_max = msg["range_max"].as_number(12);

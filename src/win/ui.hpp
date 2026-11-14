@@ -9,7 +9,9 @@
 #include "path_tools.hpp"
 #include "robot.hpp"
 #include "textures.hpp"
+#include "theme.hpp"
 #include "tilt.hpp"
+#include "widgets.hpp"
 
 struct ID3D11Device;
 struct ID3D11DeviceContext;
@@ -41,6 +43,8 @@ public:
     // "drive" | "map" | "robot" | "log" | "connect" (화면 저장 요청용)
     bool select_screen(const std::string& name);
     LogRing& events() { return robot_.events(); }
+    void set_keyboard_drive(bool on) { kbdrive_ = on; }
+    void set_privacy(bool on) { privacy_ = on; }  // 화면에 IP 를 보이지 않음(녹화·스크린샷용)
 
 private:
     // 입력·안전
@@ -60,7 +64,6 @@ private:
     void draw_connect(const RobotSnapshot& s);
     void draw_radar(const RobotSnapshot& s, float cx, float cy, float radius, float alpha);
     bool estop_button(double now, const RobotSnapshot& s, float w, float h);
-    bool big_button(const char* label, float w, float h, unsigned color = 0);
     void connect_to(const std::string& host);
     void update_textures();
     void save_settings();
@@ -103,6 +106,13 @@ private:
     std::vector<Pt> preview_m_;   // 단순화된 경로(m)
     int map_zoom_ = 1;
     bool confirm_reset_map_ = false;
+    double confirm_reset_until_ = 0;
+    bool events_open_ = false;
+    std::string toast_seen_;
+    double toast_start_ = 0;
+    bool kbdrive_ = false;
+    bool privacy_ = false;
+    std::string masked(const std::string& line) const;  // 패드 없을 때 키보드 운전(--kbdrive, Shift 를 쥔 동안만)
     // 연결 화면
     std::future<std::vector<FoundRobot>> discovering_;
     std::vector<FoundRobot> found_;

@@ -20,17 +20,19 @@
 
 ## 화면
 
-<!-- TODO: 실제 스크린샷 -->
-| 주행 화면(카메라 + 레이더 HUD) | 지도·경로 화면(스케치 → 경유점) |
-|---|---|
-| `figures/drive.png` (TODO) | `figures/map.png` (TODO) |
+흑갈리(ROG Ally X)에서 앱이 직접 저장한 1920×1080 화면이다(F12). **가짜 로봇(`tools/mock_robot.py`)에 연결한 상태**라 카메라는 시험 패턴이고 지도는 가상의 방이다. 주소는 `--privacy` 모드로 가렸다.
 
-<!-- TODO: 실제 스크린샷 -->
-| 로봇 화면(자세·동작 그룹) | 로그 화면(RTT 분포) |
+| 주행 — 카메라, LiDAR 레이더, 주행 상태 캡슐 | 지도 — 손가락으로 경로 그리기 |
 |---|---|
-| `figures/robot.png` (TODO) | `figures/log.png` (TODO) |
+| ![주행 화면](docs/screenshots/drive.png) | ![지도 화면](docs/screenshots/map.png) |
+| **로봇 — 자세 7개, 동작 24개(⚠ 큰 동작은 두 번)** | **로그 — ACK RTT, 유실, 카메라, 화면 fps** |
+| ![로봇 화면](docs/screenshots/robot.png) | ![로그 화면](docs/screenshots/log.png) |
 
-<!-- TODO: 실제 스크린샷 — 60~90 초 GIF/영상: Ally 화면 녹화 + 실제 로봇 장면 -->
+디자인 개편 전후(왼쪽이 기본 ImGui 룩, 오른쪽이 개편 후). 근거와 결정 과정은 [`docs/DESIGN_PLAN_v1.md`](docs/DESIGN_PLAN_v1.md).
+
+![디자인 전후](docs/screenshots/before_after_drive.png)
+
+<!-- TODO: 실제 로봇 장면 GIF(실기 시험 뒤) -->
 
 ## 왜 Ally X 인가
 
@@ -149,7 +151,7 @@ make CROSS=x86_64-w64-mingw32- BUILD=build-win app   # Windows exe 교차 빌드
 .\build.ps1 run      # 빌드 후 실행
 ```
 
-실행 시 테두리 없는 전체 화면으로 뜨며(F11 로 창 모드, `--windowed` 인자로 시작부터 창 모드), 설정은 exe 옆 `config.json`, 사진은 `shots\` 에 저장된다. 한글은 시스템 `malgun.ttf`(+ 기호 `seguisym.ttf`)를 실행 시 읽어 쓰므로 폰트를 재배포하지 않는다. 마지막으로 연결한 주소가 있으면 시작과 함께 자동 연결을 시도한다.
+실행 시 테두리 없는 전체 화면으로 뜨며(F11 로 창 모드, `--windowed` 인자로 시작부터 창 모드, `--privacy` 는 화면에서 IP 를 가림, `--kbdrive` 는 패드 없는 PC 에서 Shift 를 쥔 동안만 W/A/S/D 운전, F12 는 화면 저장), 설정은 exe 옆 `config.json`, 사진은 `shots\` 에 저장된다. 한글은 시스템 `malgun.ttf`(+ 기호 `seguisym.ttf`)를 실행 시 읽어 쓰므로 폰트를 재배포하지 않는다. 마지막으로 연결한 주소가 있으면 시작과 함께 자동 연결을 시도한다.
 
 **주의**: 서명하지 않은 exe 라 Windows Smart App Control 이 켜져 있으면 실행이 막힌다(앱별 예외가 없다). 작성자는 개발용 기기에서 이 기능을 끄고 실행했다. 끄기 전에 Windows 업데이트에 따라 다시 켜기 어려울 수 있다는 점을 확인할 것.
 

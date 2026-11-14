@@ -91,7 +91,10 @@ bool parse_discovery_reply(const std::string& msg, const std::string& nonce, Fou
     int port = std::atoi(f[4].c_str());
     if (port < 1 || port > 65535) return false;
     out.id = f[2];
-    out.name = url_decode(f[3]);
+    out.name.clear();
+    for (unsigned char c : url_decode(f[3]))  // 제어 문자는 버리고(로봇 쪽 규칙과 같게) 32 바이트까지
+        if (c >= 0x20 && c != 0x7F && out.name.size() < 32) out.name += static_cast<char>(c);
+    if (out.name.empty()) out.name = "PuppyPi";
     out.control_port = static_cast<uint16_t>(port);
     return true;
 }

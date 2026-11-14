@@ -338,7 +338,8 @@ void V2Client::receiver_loop() {
             ++rx_;
             if (packet_fn_) packet_fn_("RX " + data);
             if (!ok) continue;
-            if (!ack.client_id.empty() && ack.client_id != client_id_) continue;  // 이전 세션의 늦은 ACK
+            // 다른(이전) 세션의 ACK, 또는 client_id 가 없는 invalid_packet 응답은 상태에 반영하지 않는다
+            if (ack.client_id != client_id_) continue;
             double t = now_s();
             last_ack_ = ack;
             have_ack_ = true;

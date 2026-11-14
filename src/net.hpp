@@ -53,7 +53,8 @@ private:
     uint64_t seq_ = 0;
     std::vector<double> times_;
     std::string status_ = "stopped";
-    std::atomic<sock_t> fd_{kBadSock};
+    sock_t fd_ = kBadSock;  // fd_mu_ 로 보호
+    std::mutex fd_mu_;
 };
 
 }  // namespace hg

@@ -7,6 +7,10 @@
 
 namespace hg {
 
+namespace {
+constexpr uint64_t kMaxMessage = 8ull * 1024 * 1024;  // 가장 큰 정상 메시지는 /map(수백 KB)
+}
+
 RosBridge::RosBridge(std::string host, uint16_t port) : host_(std::move(host)), port_(port) {}
 
 RosBridge::~RosBridge() { stop(); }
@@ -19,8 +23,11 @@ void RosBridge::start() {
 
 void RosBridge::stop() {
     running_ = false;
-    sock_t fd = fd_.load();
-    if (fd != kBadSock) shutdown(fd, SHUT_RDWR);
+    {
+        // 수신 스레드가 닫기 전인 소켓만 깨운다(닫힌 번호가 다른 소켓에 재사용되는 경쟁 방지)
+        std::lock_guard<std::mutex> lk(fd_mu_);
+        if (fd_ != kBadSock) shutdown(fd_, SHUT_RDWR);
+    }
     if (th_.joinable()) th_.join();
 }
 
@@ -98,7 +105,11 @@ bool RosBridge::handshake(sock_t fd) {
 }
 
 bool RosBridge::send_frame(int op, const std::string& payload) {
-    sock_t fd = fd_.load();
+    sock_t fd;
+    {
+        std::lock_guard<std::mutex> lk(fd_mu_);
+        fd = fd_;
+    }
     if (fd == kBadSock) return false;
     std::string f;
     f += static_cast<char>(0x80 | op);
@@ -157,7 +168,7 @@ bool RosBridge::recv_frame(sock_t fd, int& op, std::string& payload) {
             len = 0;
             for (int i = 0; i < 8; ++i) len = (len << 8) | e[i];
         }
-        if (len > 64ull * 1024 * 1024) return false;
+        if (len > kMaxMessage || payload.size() + len > kMaxMessage) return false;  // 조각을 이어 붙여도 8 MiB 까지
         unsigned char m[4] = {0, 0, 0, 0};
         if (masked && !recv_exact(fd, reinterpret_cast<char*>(m), 4)) return false;
         std::string data(static_cast<size_t>(len), '\0');
@@ -226,7 +237,10 @@ void RosBridge::loop() {
         bool shook = fd != kBadSock && handshake(fd);
         if (fd != kBadSock) sock_set_recv_timeout(fd, 0);  // 0 = 제한 없음. 끊김은 TCP 가 알려 준다
         if (shook) {
-            fd_ = fd;
+            {
+                std::lock_guard<std::mutex> lk(fd_mu_);
+                fd_ = fd;
+            }
             connected_ = true;
             {
                 std::lock_guard<std::mutex> lk(mu_);
@@ -255,8 +269,12 @@ void RosBridge::loop() {
                 if (op == 0x1) on_message(payload);
             }
             connected_ = false;
-            fd_ = kBadSock;
-            sock_close(fd);
+            {
+                std::lock_guard<std::mutex> lk(fd_mu_);
+                std::lock_guard<std::mutex> sk(send_mu_);  // 보내는 중인 프레임이 끝난 뒤 닫는다
+                fd_ = kBadSock;
+                sock_close(fd);
+            }
             std::map<std::string, ServiceFn> dropped;
             {
                 std::lock_guard<std::mutex> lk(mu_);

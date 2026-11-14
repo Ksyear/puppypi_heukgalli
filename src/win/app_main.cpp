@@ -8,13 +8,16 @@
 #include <shellapi.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <string>
 
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
+#include "theme.hpp"
 #include "ui.hpp"
+#include "widgets.hpp"
 #include "util.hpp"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -194,6 +197,13 @@ void logf(const std::string& line) {
 }
 }  // namespace
 
+void hg_imgui_assert_failed(const char* expr, const char* file, int line) {
+    logf(hg::fmt("ImGui 검사 실패: %s (%s:%d)", expr, file, line));
+    if (g_log) std::fclose(g_log);
+    g_log = nullptr;
+    std::abort();
+}
+
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
     g_log = std::fopen((exe_dir() + "\\app_log.txt").c_str(), "w");
     logf("시작");
@@ -201,8 +211,12 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
     timeBeginPeriod(1);  // 20 Hz 송신 스레드의 sleep 해상도(기본 15.6 ms → 1 ms)
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    for (int i = 1; i < argc; ++i)
+    bool kbdrive = false, privacy = false;
+    for (int i = 1; i < argc; ++i) {
         if (std::wstring(argv[i]) == L"--windowed") g_fullscreen = false;
+        if (std::wstring(argv[i]) == L"--kbdrive") kbdrive = true;  // 패드 없는 PC 시연용(Shift 데드맨)
+        if (std::wstring(argv[i]) == L"--privacy") privacy = true;  // 화면에 IP 를 보이지 않음
+    }
     LocalFree(argv);
 
     ImGui_ImplWin32_EnableDpiAwareness();
@@ -221,6 +235,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
         MessageBoxW(nullptr, L"Direct3D 11 장치를 만들 수 없습니다.", L"흑갈리 PuppyPi", MB_ICONERROR);
         return 1;
     }
+    logf("D3D11 장치 준비");
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     if (g_fullscreen) set_fullscreen(hwnd, true);
     UpdateWindow(hwnd);
@@ -230,44 +245,23 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;  // 창 배치는 코드가 정한다
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // 패드는 로봇 조종에만 쓴다(ImGui 패드 탐색 끔)
-    ImGui::StyleColorsDark();
-    ImGuiStyle& st = ImGui::GetStyle();
-    st.FrameRounding = 10.0f;
-    st.ChildRounding = 0.0f;
-    st.GrabRounding = 8.0f;
-    st.FramePadding = ImVec2(12, 10);
-    st.ItemSpacing = ImVec2(12, 12);
-    st.ScrollbarSize = 28.0f;  // 손가락으로 잡을 수 있게
-    st.GrabMinSize = 28.0f;
-    st.Colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.065f, 0.08f, 1.0f);
-    st.Colors[ImGuiCol_ChildBg] = ImVec4(0.06f, 0.065f, 0.08f, 1.0f);
-    st.Colors[ImGuiCol_Button] = ImVec4(0.17f, 0.19f, 0.24f, 1.0f);
-    st.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.24f, 0.27f, 0.34f, 1.0f);
-    st.Colors[ImGuiCol_ButtonActive] = ImVec4(0.32f, 0.38f, 0.52f, 1.0f);
-    st.ScaleAllSizes(scale);
-    st.FontScaleDpi = scale;
-    st.FontSizeBase = 20.0f;
-
-    // 한글: 시스템 맑은 고딕을 실행 시 읽는다(재배포하지 않음). 기호는 Segoe UI Symbol 을 합친다. 글리프는 쓰는 순간 만들어진다.
+    // 색·간격·글꼴은 theme.cpp(디자인 토큰). 시스템 글꼴은 실행 시 읽기만 하고, Pretendard Std 는 fonts\ 에 번들(OFL)
+    logf("ImGui 문맥 생성");
+    hg::theme::apply_style(scale);
+    hg::w::set_scale(scale);
     char windir[MAX_PATH] = "C:\\Windows";
     GetWindowsDirectoryA(windir, MAX_PATH);
-    std::string fonts = std::string(windir) + "\\Fonts\\";
-    ImFont* main_font = nullptr;
-    if (file_exists((fonts + "malgun.ttf").c_str())) main_font = io.Fonts->AddFontFromFileTTF((fonts + "malgun.ttf").c_str());
-    if (!main_font) io.Fonts->AddFontDefault();
-    if (main_font && file_exists((fonts + "seguisym.ttf").c_str())) {
-        ImFontConfig cfg;
-        cfg.MergeMode = true;
-        io.Fonts->AddFontFromFileTTF((fonts + "seguisym.ttf").c_str(), 0.0f, &cfg);
-    }
-
-    logf(main_font ? "글꼴: malgun.ttf" : "글꼴: 기본(맑은 고딕 없음)");
+    logf("스타일 적용, 글꼴 읽는 중");
+    hg::theme::load_fonts(std::string(windir) + "\\Fonts\\", exe_dir());
+    logf("글꼴: " + hg::theme::F.body_name + (hg::theme::F.icons ? " + 아이콘" : " (아이콘 글꼴 없음)"));
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_dev, g_ctx);
     logf("ImGui 준비");
 
     {
         hg::App app(g_dev, g_ctx, hwnd, exe_dir(), scale);
+        app.set_keyboard_drive(kbdrive);
+        app.set_privacy(privacy);
         g_app = &app;
         bool done = false, was_occluded = false;
         // 화면 저장: F12, 또는 exe 옆에 screenshot.request 파일이 생기면(원격 점검용, 1 초마다 확인)

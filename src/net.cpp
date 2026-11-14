@@ -159,8 +159,10 @@ void MjpegReader::start() {
 
 void MjpegReader::stop() {
     running_ = false;
-    sock_t fd = fd_.load();
-    if (fd != kBadSock) shutdown(fd, SHUT_RDWR);  // 수신 스레드가 recv 에서 깨어나 직접 닫는다
+    {
+        std::lock_guard<std::mutex> lk(fd_mu_);
+        if (fd_ != kBadSock) shutdown(fd_, SHUT_RDWR);  // 수신 스레드가 recv 에서 깨어나 직접 닫는다
+    }
     if (th_.joinable()) th_.join();
     std::lock_guard<std::mutex> lk(mu_);
     status_ = "stopped";
@@ -198,11 +200,17 @@ void MjpegReader::loop() {
         std::string err;
         sock_t fd = tcp_connect(host_, port_, 2000, &err);
         if (fd != kBadSock) {
-            fd_ = fd;
+            {
+                std::lock_guard<std::mutex> lk(fd_mu_);
+                fd_ = fd;
+            }
             sock_set_recv_timeout(fd, 2500);
             bool ok = read_stream(fd);
-            fd_ = kBadSock;
-            sock_close(fd);
+            {
+                std::lock_guard<std::mutex> lk(fd_mu_);
+                fd_ = kBadSock;
+                sock_close(fd);
+            }
             std::lock_guard<std::mutex> lk(mu_);
             if (status_ == "streaming" || status_ == "connecting") status_ = ok ? "closed" : "lost";
         } else {
@@ -254,6 +262,7 @@ bool MjpegReader::read_stream(sock_t fd) {
             if (cl != std::string::npos) len = static_cast<size_t>(std::atoll(part_head.c_str() + cl + 15));
             std::string jpeg;
             if (len != std::string::npos) {
+                if (len > 4 * 1024 * 1024) return false;  // 비정상적으로 큰 부분은 연결을 끊는다
                 if (buf.size() < body + len) break;
                 jpeg = buf.substr(body, len);
                 buf.erase(0, body + len);
