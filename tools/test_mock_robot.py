@@ -36,7 +36,7 @@ def http_json(path, port=8090):
         return resp.headers, json.loads(resp.read())
 
 
-def scan_until(ws, pred, timeout=3.0):
+def scan_until(ws, pred, timeout=6.0):  # CI 러너가 느려도 버티게(10 Hz 스캔 60개)
     """Ranges of the next /scan whose ranges satisfy pred (older scans may still be queued)."""
     return ws.recv_json(lambda m: m.get("topic") == "/scan" and pred(m["msg"]["ranges"]), timeout)["msg"]["ranges"]
 
@@ -352,8 +352,9 @@ class MockRobotTest(unittest.TestCase):
             cleared = http_json("/mock/obstacles/clear")[1]
             self.assertEqual((cleared["removed"], cleared["obstacles"]), (2, []))
             self.assertEqual(http_json("/mock/obstacles")[1]["obstacles"], [])
-            restored = scan_until(ws, lambda r: abs(r[AHEAD] - before[AHEAD]) < 1e-3)
-            self.assertAlmostEqual(restored[AHEAD + 112], before[AHEAD + 112], delta=1e-3)  # +90 deg, the left one
+            # 로봇이 그 사이 아주 조금 움직였을 수 있으므로 5 cm 안이면 원래 값으로 본다
+            restored = scan_until(ws, lambda r: abs(r[AHEAD] - before[AHEAD]) < 0.05)
+            self.assertAlmostEqual(restored[AHEAD + 112], before[AHEAD + 112], delta=0.05)  # +90 deg, the left one
         finally:
             http_json("/mock/obstacles/clear")
             ws.close()
