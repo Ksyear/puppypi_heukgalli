@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Core tests + mock robot integration (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: make test
+      - name: Console client
+        run: make console
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Pillow for the mock robot's JPEG/PNG
+        run: pip install pillow==11.0.0
+      - name: Robot protocol modules used by the mock (public robot repository)
+        run: git clone --depth 1 https://github.com/Ksyear/PuppyPI_Cpp_ROS2 robot
+      - name: Mock robot self-test
+        env:
+          PUPPYPI_ROBOT_SRC: ${{ github.workspace }}/robot/ros2_ws/src/puppy_vr_bridge
+        run: python tools/test_mock_robot.py
+      - name: Integration — drive, poses, actions, path, estop
+        env:
+          PUPPYPI_ROBOT_SRC: ${{ github.workspace }}/robot/ros2_ws/src/puppy_vr_bridge
+        run: |
+          python tools/mock_robot.py --host 127.0.0.1 > mock_drive.log 2>&1 &
+          MP=$!; sleep 3
+          ./build/console --host 127.0.0.1 --script tests/it_drive.txt; rc=$?
+          kill $MP; exit $rc
+      - name: Integration — LiDAR map and obstacle avoidance
+        env:
+          PUPPYPI_ROBOT_SRC: ${{ github.workspace }}/robot/ros2_ws/src/puppy_vr_bridge
+        run: |
+          python tools/mock_robot.py --host 127.0.0.1 > mock_avoid.log 2>&1 &
+          MP=$!; sleep 3
+          ./build/console --host 127.0.0.1 --script tests/it_avoid.txt; rc=$?
+          kill $MP; exit $rc
+      - name: Mock logs on failure
+        if: failure()
+        run: tail -n 80 mock_*.log || true
+
+  windows-exe:
+    name: Windows exe (MinGW-w64 cross build)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: MinGW-w64 (posix threads)
+        run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+      - name: Build app and unit tests
+        run: make CROSS=x86_64-w64-mingw32- CXX=x86_64-w64-mingw32-g++-posix BUILD=build-win app build-win/test_core.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puppypi_heukgalli-windows
+          path: |
+            build-win/puppypi_heukgalli.exe
+            fonts/
+            LICENSE
+            THIRD_PARTY.md
