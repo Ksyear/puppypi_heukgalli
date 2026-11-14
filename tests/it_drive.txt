@@ -1,0 +1,31 @@
+# 통합 시험: 가짜 로봇(tools/mock_robot.py)에 연결해 조종 규칙을 차례로 확인한다
+expect v2 idle 3
+status
+drive 0.8 0 1.0
+expect v2 idle 2
+home
+expect result 서기 3
+pose Stand
+action wave
+expect result 동작 wave 3
+wait 2.2
+path 0.6,0 0.6,0.4
+expect path drive 3
+expect path done 20
+path 0.2,0.4
+expect path rotate 3
+drive 0.5 0 0.3
+expect path cancelled 3
+estop
+expect estop 1 2
+clear
+expect estop 0 3
+expect v2 idle 3
+savemap
+expect result 지도 저장 3
+resetmap
+expect result 지도 새로 시작 3
+topics
+expect result 토픽 3
+rtt 3
+status

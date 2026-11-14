@@ -1,0 +1,8 @@
+build/
+build-win/
+*.log
+config.json
+shots/
+toolchain/
+docs/SECURITY_REVIEW*.md
+docs/screenshots/
