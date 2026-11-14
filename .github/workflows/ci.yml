@@ -35,7 +35,8 @@ jobs:
           python tools/mock_robot.py --host 127.0.0.1 > mock_drive.log 2>&1 &
           MP=$!; sleep 3
           ./build/console --host 127.0.0.1 --script tests/it_drive.txt; rc=$?
-          kill $MP; exit $rc
+          kill $MP; wait $MP || true   # 포트를 놓을 때까지 기다린다(다음 단계가 같은 포트를 쓴다)
+          exit $rc
       - name: Integration — LiDAR map and obstacle avoidance
         env:
           PUPPYPI_ROBOT_SRC: ${{ github.workspace }}/robot/ros2_ws/src/puppy_vr_bridge
@@ -43,7 +44,8 @@ jobs:
           python tools/mock_robot.py --host 127.0.0.1 > mock_avoid.log 2>&1 &
           MP=$!; sleep 3
           ./build/console --host 127.0.0.1 --script tests/it_avoid.txt; rc=$?
-          kill $MP; exit $rc
+          kill $MP; wait $MP || true
+          exit $rc
       - name: Mock logs on failure
         if: failure()
         run: tail -n 80 mock_*.log || true
