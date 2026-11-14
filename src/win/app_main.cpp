@@ -269,7 +269,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
         // 화면 저장: F12, 또는 exe 옆에 screenshot.request 파일이 생기면(원격 점검용, 1 초마다 확인)
         const std::string dir = exe_dir(), request = dir + "\\screenshot.request";
         double next_request_check = 0;
-        bool shot_pending = false, shot_after_switch = false;
+        bool shot_pending = false, shot_after_switch = false, shot_unmask = false;
         uint64_t event_cursor = 0;
         double next_perf_log = 0;
         while (!done && !app.quit_requested()) {
@@ -343,13 +343,19 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
                 }
             }
             if (ImGui::IsKeyPressed(ImGuiKey_F12, false)) shot_pending = true;
-            if (shot_pending) {
+            if (shot_pending && !app.privacy()) {
+                // 저장하는 이미지에는 IP 를 남기지 않는다: 가린 화면을 한 프레임 그린 뒤 저장하고 되돌린다
+                app.set_privacy(true);
+                shot_unmask = true;
+            } else if (shot_pending) {
                 shot_pending = false;
                 CreateDirectoryA((dir + "\\shots").c_str(), nullptr);
                 SYSTEMTIME t;
                 GetLocalTime(&t);
                 std::string path = dir + hg::fmt("\\shots\\ui_%04d%02d%02d_%02d%02d%02d.bmp", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
                 logf(save_backbuffer_bmp(path) ? "화면 저장 " + path : "화면 저장 실패");
+                if (shot_unmask) app.set_privacy(false);
+                shot_unmask = false;
             }
             HRESULT hr = g_swap->Present(1, 0);  // vsync(흑갈리 120 Hz)
             g_occluded = hr == DXGI_STATUS_OCCLUDED;

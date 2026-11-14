@@ -131,10 +131,24 @@ void App::set_cpu_ms(double ms, double now) {
     }
 }
 
-std::string App::perf_line() const {
+std::string App::perf_line() {
     static const char* names[] = {"drive", "map", "robot", "log", "connect"};
-    return fmt("perf screen=%s cpu_avg=%.2fms cpu_max2s=%.2fms fps=%.0f", names[static_cast<int>(screen_)], cpu_ms_avg_, cpu_ms_max_,
-               ImGui::GetIO().Framerate);
+    std::string line = fmt("perf screen=%s cpu_avg=%.2fms cpu_max2s=%.2fms fps=%.0f", names[static_cast<int>(screen_)], cpu_ms_avg_,
+                           cpu_ms_max_, ImGui::GetIO().Framerate);
+    // 실기 측정(docs/MEASUREMENTS.md)용. 로그 화면과 같은 방식(중앙값 = 정렬 후 n/2 번째)
+    std::vector<float> r;
+    r.swap(perf_rtt_);
+    if (perf_linked_) {
+        if (!r.empty()) {
+            std::sort(r.begin(), r.end());
+            line += fmt(" rtt_med=%.1fms rtt_p95=%.1fms rtt_n=%zu", r[r.size() / 2], r[std::min(r.size() - 1, r.size() * 95 / 100)],
+                        r.size());
+        }
+        line += fmt(" loss=%.1f%%", perf_loss_);
+    }
+    if (robot_.camera_enabled() && cam_tex_.valid())
+        line += fmt(" cam_fps=%.1f cam_age=%.0fms", robot_.camera_fps(), (now_s() - cam_tex_.rx_time) * 1000);
+    return line;
 }
 
 void App::save_settings() { cfg_.save(exe_dir_ + "\\config.json"); }
@@ -339,8 +353,11 @@ void App::feedback(double now, const RobotSnapshot& s) {
     if (v.rx != rtt_last_rx_ && v.rtt_last_ms >= 0) {
         rtt_hist_.push_back(static_cast<float>(v.rtt_last_ms));
         if (rtt_hist_.size() > 600) rtt_hist_.erase(rtt_hist_.begin(), rtt_hist_.begin() + 100);
+        if (perf_rtt_.size() < 4000) perf_rtt_.push_back(static_cast<float>(v.rtt_last_ms));
     }
     rtt_last_rx_ = v.rx;
+    perf_linked_ = s.connected && v.linked;
+    perf_loss_ = v.loss_pct;
 }
 
 }  // namespace hg

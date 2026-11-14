@@ -16,7 +16,7 @@
 | 가짜 로봇 통합 시험 | 주행 `tests/it_drive.txt`(expect 14개)와 장애물 회피 `tests/it_avoid.txt`(expect 8개) 모두 통과. 맥 루프백, GitHub Actions(푸시마다) |
 | 흑갈리 → 맥 가짜 로봇 (Tailscale) | `it_drive` 통과. `it_avoid` 는 Tailscale 이 중계(DERP)로 바뀐 때 UDP 유실 25–56 % 로 로봇 watchdog(0.4 s)이 경로를 취소해 3개 실패했다. 설계대로 멈춘 것이며 실제 LAN 에서 다시 확인해야 한다 |
 | Windows exe | 맥 교차 빌드, GitHub Actions 교차 빌드, 흑갈리 자체 빌드(`build.ps1`) 모두 성공, 경고 0. 아이콘·매니페스트 포함 |
-| 흑갈리에서 실행 | **확인함(가짜 로봇에 연결).** 다섯 화면 표시, 내장 패드(XInput) 인식, 화면 120 fps, 프레임당 CPU 평균 0.6–1.0 ms([측정 기록](docs/MEASUREMENTS.md)). 진동·터치 스케치·기울기는 아직 사람이 확인하지 않았다 |
+| 흑갈리에서 실행 | **확인함(가짜 로봇에 연결).** 다섯 화면 표시, 내장 패드(XInput) 인식, 화면 120 fps(2026-11-14, 전원 상태 미기록)·배터리에서 93–116 fps(2026-11-15), 프레임당 CPU 평균 0.6–1.2 ms([측정 기록](docs/MEASUREMENTS.md)). 진동·터치 스케치·기울기는 아직 사람이 확인하지 않았다 |
 | 배포 | [v0.1.0](https://github.com/Ksyear/puppypi_heukgalli/releases/tag/v0.1.0) 사전 릴리스(2026-11-14, Windows x64 zip). 앱 아이콘은 다음 릴리스부터 들어간다 |
 | 실제 로봇 시험 | **아직 안 함.** 사용자가 [`docs/HW_TEST_CHECKLIST.md`](docs/HW_TEST_CHECKLIST.md) 로 수행한다 |
 
@@ -50,7 +50,7 @@
 
 | 옵션 | 뜻 |
 |---|---|
-| (없음) | 테두리 없는 전체 화면. **F11** 로 창 모드와 전환, **F12** 로 화면 저장(`shots\ui_*.bmp`) |
+| (없음) | 테두리 없는 전체 화면. **F11** 로 창 모드와 전환, **F12** 로 화면 저장(`shots\ui_*.bmp`, IP 는 항상 가려서 저장) |
 | `--windowed` | 처음부터 창 모드 |
 | `--privacy` | 화면에서 IP 주소를 가린다(스크린샷·녹화용) |
 | `--kbdrive` | 패드가 없는 PC 에서 Shift 를 쥔 동안만 W/A/S/D 로 운전(개발·시연용) |
@@ -231,7 +231,7 @@ python3 tools/mock_robot.py &                     # UDP 5001/5002, TCP 8080/8090
 | 카메라 수신 fps, 프레임 나이 | **미측정** | 로그 화면에 표시되지만 실기에서 읽은 값 없음 |
 | 회피 반응 거리 | **미측정** | 실기 점검표 26번 |
 
-스틱 입력 → 로봇 다리 움직임까지의 종단 지연은 로봇 시계와의 동기화 근거가 없어 측정 대상에서 뺐다. 앱이 보여 주는 RTT 는 흑갈리 한 기기의 시계로 잰 왕복 시간이다. 날짜별 원 기록은 [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
+스틱 입력 → 로봇 다리 움직임까지의 종단 지연은 로봇 시계와의 동기화 근거가 없어 측정 대상에서 뺐다. 앱이 보여 주는 RTT 는 흑갈리 한 기기의 시계로 잰 왕복 시간이다. 앱은 5 초마다 `app_log.txt` 에 `perf` 한 줄(CPU·fps, 그 5 초 동안의 RTT 중앙값·p95·표본 수, 유실, 카메라 fps·프레임 나이)을 남기며, 실기 수치는 이 줄에서 뽑는다. 날짜별 원 기록은 [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
 
 ## 한계와 범위 밖
 

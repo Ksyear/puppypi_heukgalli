@@ -46,7 +46,7 @@ flowchart LR
 
 | 스레드 | 주기 | 하는 일 |
 |---|---|---|
-| UI | 120 Hz(vsync) | 패드 읽기 → `set_drive()`, 스냅샷 복사, 그리기, 텍스처 올리기. 프레임당 CPU 평균 0.6–1.0 ms(흑갈리 실측, `docs/MEASUREMENTS.md`) |
+| UI | 120 Hz(vsync) | 패드 읽기 → `set_drive()`, 스냅샷 복사, 그리기, 텍스처 올리기. 프레임당 CPU 평균 0.6–1.2 ms(흑갈리 실측, `docs/MEASUREMENTS.md`) |
 | v2 송신 | 20 Hz | `decide_drive()` → `command` 1개. 입력이 0.25 s 끊기거나 ACK 가 0.6 s 없으면 중립 |
 | v2 수신 | 블로킹 | ACK → 상태·RTT·경로 요청 확인 |
 | rosbridge 수신 | 이벤트 | `/map`(2 s, PNG) 해석, `/lidar_map/pose` 10 Hz + 지나온 길, `/scan` 10 Hz, 상태·중재기 |

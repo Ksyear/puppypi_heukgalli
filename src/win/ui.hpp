@@ -52,10 +52,12 @@ public:
     bool select_screen(const std::string& name);
     LogRing& events() { return robot_.events(); }
     void set_keyboard_drive(bool on) { kbdrive_ = on; }
-    void set_privacy(bool on) { privacy_ = on; }
+    void set_privacy(bool on) { privacy_ = on; }  // 화면에 IP 를 보이지 않음(녹화·스크린샷용)
+    bool privacy() const { return privacy_; }
     // 한 프레임의 CPU 시간(입력 처리 + 그리기 명령 생성 + 제출). 최근 평균과 최근 2 초 최대
     void set_cpu_ms(double ms, double now);
-    std::string perf_line() const;  // 측정 기록용 한 줄(화면 이름, CPU 평균·최대, fps)  // 화면에 IP 를 보이지 않음(녹화·스크린샷용)
+    // 측정 기록용 한 줄: 화면 이름, CPU 평균·최대, fps + 지난 줄 이후의 ACK RTT(중앙값·p95·표본 수)·유실·카메라
+    std::string perf_line();
 
 private:
     // 입력·안전
@@ -147,7 +149,7 @@ private:
     bool kbdrive_ = false;
     bool privacy_ = false;
     double cpu_ms_avg_ = 0, cpu_ms_max_ = 0, cpu_max_since_ = 0, cpu_max_run_ = 0;
-    std::string masked(const std::string& line) const;  // 패드 없을 때 키보드 운전(--kbdrive, Shift 를 쥔 동안만)
+    std::string masked(const std::string& line) const;  // privacy_ 이면 IP 를 가린다
     // 연결 화면
     std::future<std::vector<FoundRobot>> discovering_;
     std::vector<FoundRobot> found_;
@@ -156,6 +158,9 @@ private:
     // 측정
     std::vector<float> rtt_hist_;
     uint64_t rtt_last_rx_ = 0;
+    std::vector<float> perf_rtt_;  // perf_line 사이(5 s)의 RTT 표본. 겹치지 않는 구간이라 줄마다 독립
+    double perf_loss_ = 0;
+    bool perf_linked_ = false;
     // 커스텀 자세
     float pose_roll_ = 0, pose_pitch_ = 0, pose_yaw_ = 0, pose_height_ = -10, pose_xshift_ = -0.5f;
     float pose_sx_ = 0, pose_sy_ = 0;
