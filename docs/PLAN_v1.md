@@ -1,6 +1,6 @@
 # puppypi_heukgalli 계획 v1
 
-작성: 2026-11-14 | 상태: 초안, 사용자 결정 대기 항목은 **[결정]** 표시
+작성: 2026-11-14 | 상태: **기록용**(계획 당시 그대로 둠, **[결정]** 항목은 그때 정했다). 현재 동작은 README·`docs/ARCHITECTURE.md` 가 기준
 대상: ASUS ROG Ally X(흑갈리)에서 Hiwonder PuppyPi(ROS 2 Humble)를 제어하는 개인 C++ 포트폴리오 앱
 
 ## 0. 한 줄 요약

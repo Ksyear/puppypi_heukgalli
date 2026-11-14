@@ -1,6 +1,6 @@
 # puppypi_heukgalli UI 재설계 계획 v1
 
-작성: 2026-11-14 | 상태: 초안(코드 변경 없음) | 대상: `src/win/ui.cpp`, `src/win/app_main.cpp` (Dear ImGui 1.93.0, Win32 + D3D11)
+작성: 2026-11-14 | 상태: **기록용**(일부 구현 뒤 `DESIGN_PLAN_v2.md` 로 대체됨) | 대상: `src/win/ui.cpp`, `src/win/app_main.cpp` (Dear ImGui 1.93.0, Win32 + D3D11)
 화면 기준: ROG Ally X 7" 1920×1080, DPI 배율 1.5 → **논리 해상도 1280×720**. 아래 치수는 모두 논리 px(1.0 배율)이며 괄호 안이 실제 px.
 근거 스크린샷: `docs/screenshots/{drive,map,robot,log}.png` (2026-11-14, mock 로봇).
 

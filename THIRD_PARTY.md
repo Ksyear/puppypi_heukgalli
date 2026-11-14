@@ -3,7 +3,7 @@
 | Component | Version | License | Where | Use |
 |---|---|---|---|---|
 | [Dear ImGui](https://github.com/ocornut/imgui) | 1.93.0 | MIT | `third_party/imgui/` (core + Win32/DX11 backends, unmodified) | UI |
-| [stb_image](https://github.com/nothings/stb) | 2.32 | MIT or Public Domain (Unlicense), author's choice | `third_party/stb_image.h` (unmodified, SHA-256 `deb4f18c…6e91`) | JPEG decode |
+| [stb_image](https://github.com/nothings/stb) | 2.32 | MIT or Public Domain (Unlicense), author's choice | `third_party/stb_image.h` (unmodified, SHA-256 `deb4f18c…6e91`) | JPEG decode (camera), PNG decode (rosbridge-compressed `/map`) |
 | [Pretendard Std](https://github.com/orioncactus/pretendard) | 1.3.9 (Regular, SemiBold, Bold TTF) | SIL Open Font License 1.1 (Reserved Font Name "Pretendard Std") | `fonts/` (unmodified, licence in `fonts/LICENSE-Pretendard.txt`) | UI text |
 | Malgun Gothic, Segoe Fluent Icons / MDL2 Assets, Segoe UI Symbol, Consolas | system fonts | Microsoft Windows license | loaded at run time from `%WINDIR%\Fonts` | fallback Hangul, icons, symbols, numbers (not redistributed) |
 

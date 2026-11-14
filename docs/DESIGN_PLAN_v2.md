@@ -1,6 +1,6 @@
 # puppypi_heukgalli UI 재설계 계획 v2 — "검은 유리 조종석"
 
-작성: 2026-11-14 | 상태: 계획(코드 변경 없음) | 선행: `docs/DESIGN_PLAN_v1.md`(일부 구현됨)
+작성: 2026-11-14 | 상태: **기록용**(2026-11-14 구현됨, 현재 화면의 바탕). 세부 문구·버튼 이름은 코드가 기준 | 선행: `docs/DESIGN_PLAN_v1.md`(일부 구현됨)
 대상 코드: `src/win/theme.*`, `src/win/widgets.*`, `src/win/ui.cpp`, `src/robot.cpp`(지도 데이터 경로만 추가)
 화면: ROG Ally X 7" 1920×1080, DPI 1.5 → 논리 1280×720. 아래 치수는 **논리 px**이며 괄호가 실제 px. 터치 타깃 하한 48 논리(72 px).
 근거 스크린샷: `docs/screenshots/{drive,map,robot,log,connect,before_after_drive}.png` (실기, mock 로봇).

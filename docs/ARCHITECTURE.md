@@ -111,5 +111,15 @@ sequenceDiagram
 ## 6. 시험의 경계
 
 - 단위 시험(`tests/test_core.cpp`, 95개): 파서, `decide_drive()`, 경로 단순화, 지도 좌표, LiDAR 해석, 계획기(우회·틈·막힘·지도 기반·감시 범위·막힘 판정·남은 경유점).
-- 통합 시험(`tests/it_*.txt`, 콘솔 클라이언트 + `tools/mock_robot.py`): 가짜 로봇은 로봇 저장소의 프로토콜 모듈을 실행 시 불러와 규칙의 기준으로 쓰고, 방·상자·동적 장애물을 광선 투사로 흉내 낸다.
+- 통합 시험(`tests/it_*.txt`, 콘솔 클라이언트 + `tools/mock_robot.py`): 가짜 로봇은 로봇 저장소의 프로토콜 모듈을 실행 시 불러와 규칙의 기준으로 쓰고, 방·상자·동적 장애물을 광선 투사로 흉내 낸다. 가짜 로봇 자체도 `tools/test_mock_robot.py`(12개)로 시험한다.
+- CI(`.github/workflows/ci.yml`): 푸시·PR 마다 Ubuntu 24.04 에서 위 세 가지를 돌리고 Windows exe 를 교차 빌드한다.
 - 가짜 로봇 통과는 실기 검증이 아니다. 실기는 `docs/HW_TEST_CHECKLIST.md`.
+
+## 7. 빌드 산출물
+
+| 항목 | 내용 |
+|---|---|
+| 형태 | MinGW-w64 정적 링크 단일 exe(의존 DLL 없음). 흑갈리에서는 폴더 안 GCC 16.2, 맥·CI 에서는 교차 빌드 |
+| 보안 플래그 | `-fstack-protector-strong -D_FORTIFY_SOURCE=2 -Werror=format-security -fcf-protection=full`, 링크 `--dynamicbase --nxcompat --high-entropy-va` |
+| 리소스(`src/win/app.rc`) | 아이콘(`app.ico`, `tools/make_icon.py` 로 생성), 버전 정보, 매니페스트(UTF-8 코드페이지, PerMonitorV2 DPI). 툴체인의 기본 매니페스트(`default-manifest.o`)는 빈 오브젝트로 가려 매니페스트가 하나만 남게 한다 |
+| 함께 두는 파일 | `fonts\`(Pretendard Std). 없으면 맑은 고딕으로 대신 |
