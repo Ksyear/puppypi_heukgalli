@@ -139,6 +139,8 @@ private:
     std::vector<Pt> live_obstacles_locked(double now) const;  // 지금 스캔 점 + 최근 막힘 점
     void call(const std::string& service, const std::string& type, const Json& args, const std::string& label);
     void set_result(const std::string& s);
+    // 비상정지(v2 latch·요청 또는 로봇 전체 정지 요청) 중이면 true 를 돌려주고 결과 줄에 알린다
+    bool estop_blocks(const std::string& what);
 
     mutable std::mutex mu_;
     std::string host_;

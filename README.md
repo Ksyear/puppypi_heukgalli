@@ -4,7 +4,7 @@
 
 **ROG Ally X 를 Hiwonder PuppyPi 전용 핸드헬드 리모컨으로 쓰는 C++ 클라이언트 앱.** 스틱·트리거로 데드맨 주행을 하고, 손가락으로 LiDAR 지도에 길을 그리면 앱이 장애물을 피하는 경로로 바꿔 보낸다. 카메라와 LiDAR 레이더는 120 Hz 터치 화면에 띄운다. 로봇 소프트웨어는 한 줄도 바꾸지 않는다.
 
-> **English summary.** A Win32 + Direct3D 11 + Dear ImGui 1.93.0 client for a Hiwonder PuppyPi running a team-written ROS 2 stack, built for the ASUS ROG Ally X handheld ("heukgalli", the author's black Ally X on Windows 11). It speaks only the robot's published network interfaces (UDP Protocol v2, rosbridge WebSocket, HTTP MJPEG/JSON); no Hiwonder or team code is included and the robot software is unchanged. Single static exe built with MinGW-w64 (GCC 16.2 on the Ally, cross-compiled on macOS and in CI). The map screen renders the robot's LiDAR occupancy grid (`/map`) with live scans and plans around obstacles on the app side (A* with robot-size inflation, re-planning when the live scan blocks the path), because the robot itself has no obstacle avoidance. Core unit tests (99 checks) pass on macOS, on the Ally and in GitHub Actions (Ubuntu 24.04); every push also runs the mock-robot integration scripts (drive: 14 expects, obstacle avoidance: 8 expects, emergency stop with the first two stop packets dropped) and a Windows cross build. **Status: tested on the real robot on 2026-11-16 (about 12 minutes)** — driving (stick and tilt), poses and actions, a 4.9 m path with an app-planned detour, live re-planning around a new obstacle, a 1.1 m path to arrival, emergency stop and clear, focus-loss neutral and a Wi-Fi drop stopping the robot through its watchdog all show up in the app log and screen recording; median ACK RTT about 12 ms over Wi-Fi, camera 8–16 fps. The real robot sent no `/map`, so planning used live scans only. Per-item results: `docs/HW_TEST_CHECKLIST.md`.
+> **English summary.** A Win32 + Direct3D 11 + Dear ImGui 1.93.0 client for a Hiwonder PuppyPi running a team-written ROS 2 stack, built for the ASUS ROG Ally X handheld ("heukgalli", the author's black Ally X on Windows 11). It speaks only the robot's published network interfaces (UDP Protocol v2, rosbridge WebSocket, HTTP MJPEG/JSON); no Hiwonder or team code is included and the robot software is unchanged. Single static exe built with MinGW-w64 (GCC 16.2 on the Ally, cross-compiled on macOS and in CI). The map screen renders the robot's LiDAR occupancy grid (`/map`) with live scans and plans around obstacles on the app side (A* with robot-size inflation, re-planning when the live scan blocks the path), because the robot itself has no obstacle avoidance. Core unit tests (99 checks) pass on macOS, on the Ally and in GitHub Actions (Ubuntu 24.04); every push also runs the mock-robot integration scripts (drive: 16 expects, obstacle avoidance: 8 expects, emergency stop with the first two stop packets dropped) and a Windows cross build. **Status: tested on the real robot on 2026-11-16 (about 12 minutes)** — driving (stick and tilt), poses and actions, a 4.9 m path with an app-planned detour, live re-planning around a new obstacle, a 1.1 m path to arrival, emergency stop and clear, focus-loss neutral and a Wi-Fi drop stopping the robot through its watchdog all show up in the app log and screen recording; median ACK RTT about 12 ms over Wi-Fi, camera 8–16 fps. The real robot sent no `/map`, so planning used live scans only. Per-item results: `docs/HW_TEST_CHECKLIST.md`.
 
 ---
 
@@ -13,7 +13,7 @@
 | 항목 | 상태 |
 |---|---|
 | 코어 단위 시험 | 99개 통과. macOS clang, 흑갈리 MinGW GCC 16.2(2026-11-16 다시 확인), GitHub Actions Ubuntu 24.04(푸시마다) |
-| 가짜 로봇 통합 시험 | 주행 `tests/it_drive.txt`(expect 14개), 장애물 회피 `tests/it_avoid.txt`(expect 8개), 비상정지 유실 `tests/it_estop_loss.txt` 모두 통과. 맥, GitHub Actions(푸시마다) |
+| 가짜 로봇 통합 시험 | 주행 `tests/it_drive.txt`(expect 16개), 장애물 회피 `tests/it_avoid.txt`(expect 8개), 비상정지 유실 `tests/it_estop_loss.txt` 모두 통과. 맥, GitHub Actions(푸시마다) |
 | 흑갈리 → 맥 가짜 로봇 (Tailscale) | `it_drive` 통과. `it_avoid` 는 Tailscale 이 중계(DERP)로 바뀐 때 UDP 유실 25–56 % 로 로봇 watchdog(0.4 s)이 경로를 취소해 3개 실패했다. 설계대로 멈춘 것이며 실제 LAN 에서 다시 확인해야 한다 |
 | Windows exe | 맥 교차 빌드, GitHub Actions 교차 빌드, 흑갈리 자체 빌드(`build.ps1`) 모두 성공, 경고 0. 아이콘·매니페스트 포함 |
 | 흑갈리에서 실행 | **확인함(가짜 로봇에 연결).** 다섯 화면 표시, 내장 패드(XInput) 인식, 화면 120 fps(2026-11-14, 전원 상태 미기록)·배터리에서 93–116 fps(2026-11-15), 프레임당 CPU 평균 0.6–1.2 ms([측정 기록](docs/MEASUREMENTS.md)). 진동·터치 스케치·기울기는 아직 사람이 확인하지 않았다 |
@@ -23,6 +23,20 @@
 가짜 로봇 시험 통과는 실기 검증이 아니다. 아래의 "동작한다" 는 서술은 모두 코드와 가짜 로봇 기준이다.
 
 ## 화면
+
+### 실제 로봇 (2026-11-16)
+
+흑갈리 화면 녹화(Xbox Game Bar)에서 뽑았다. 카메라는 로봇의 640×480 카메라라 흐리다(로봇 쪽 해상도·초점).
+
+![지도에 손가락으로 그린 길을 보내면 로봇이 따라간다](docs/media/real_map.gif)
+
+지도 화면: 손가락으로 그린 길을 경유점 10개로 바꿔 보내고 로봇이 따라가는 중(실시간 9 s, 12 fps). 이날 로봇에서 `/map` 이 오지 않아 실시간 LiDAR 스캔 점만 보인다.
+
+| 주행 — 실제 카메라 + LiDAR 레이더, RT 로 주행 중 | 비상정지 — B 한 번에 v2 latch + 로봇 전체 정지(296 ms), 해제는 1 초 누르기 |
+|---|---|
+| ![실제 로봇 주행 화면](docs/media/real_drive.png) | ![실제 로봇 비상정지 화면](docs/media/real_estop.png) |
+
+### 가짜 로봇 화면 (2026-11-14)
 
 흑갈리(ROG Ally X)에서 앱이 직접 저장한 1920×1080 화면이다(F12). **가짜 로봇(`tools/mock_robot.py`)에 연결한 상태**라 카메라는 시험 패턴이고 지도는 가상의 방이다. 주소는 `--privacy` 모드로 가렸다.
 
@@ -35,8 +49,6 @@
 디자인 변천(왼쪽: 첫 버전의 기본 ImGui 룩, 오른쪽: "검은 유리 조종석" v2 — 콘텐츠를 화면 전체에 깔고 조작은 떠 있는 유리 조각으로만). 조사·결정 과정은 [`docs/DESIGN_PLAN_v1.md`](docs/DESIGN_PLAN_v1.md), [`docs/DESIGN_PLAN_v2.md`](docs/DESIGN_PLAN_v2.md).
 
 ![디자인 전후](docs/screenshots/before_after_drive.png)
-
-<!-- TODO: 실제 로봇 장면 GIF(실기 시험 뒤) -->
 
 더 읽을 것: [아키텍처](docs/ARCHITECTURE.md) · [코드 둘러보기](docs/CODE_TOUR.md) · [측정 기록](docs/MEASUREMENTS.md) · [실기 점검표](docs/HW_TEST_CHECKLIST.md) · [문서 목록](#문서)
 
@@ -145,7 +157,7 @@ M1/M2 뒷면 버튼은 Armoury Crate 설정에 따라 XInput 으로 보이지 �
 3. **포커스**: 창이 활성(`WM_ACTIVATEAPP`), 최소화·가려짐(DXGI occluded) 아님, 연결·설정 화면 아님. 포커스를 잃는 순간 `set_drive(0,0,false)` 를 바로 호출한다. 포커스가 없으면 멈추는 버튼(B, X) 말고는 패드 버튼도 받지 않는다(XInput 은 포커스와 상관없이 입력을 준다).
 4. **ACK 신선도**: 로봇 ACK 가 최근 **0.6 s** 안에 왔다. 로봇 쪽 watchdog(0.4 s)이 먼저 멈추고, 앱은 그 뒤 중립으로 돌아간다.
 5. **로봇 상태**: 마지막 ACK 의 `state` 가 `idle` 또는 `active`. `awaiting_neutral`·`timeout` 이면 중립을 보내며 확인을 기다리고, 로봇이 `idle` 을 돌려주면 자동 재개한다.
-6. **비상정지 없음**: 앱이 비상정지를 요청한 상태도, ACK 의 `emergency_stop` latch 도 아니다.
+6. **비상정지 없음**: 앱이 비상정지를 요청한 상태도, ACK 의 `emergency_stop` latch 도 아니다. 비상정지 중에는 서기·자세·동작·경로 요청도 앱이 보내지 않는다(실기에서 로봇이 비상정지 중 서기를 받아들였다).
 7. **재프레스 규칙**: 비상정지 해제 직후에는 `release_required` 가 켜진다. 데드맨을 **한 번 놓아야** 풀리고, 놓기 전까지는 쥐고 있어도 움직이지 않는다.
 
 **비상정지(B 또는 빨간 버튼)** 는 v2 `emergency_stop` 을 두 번(번호를 올려) 보내고, 동시에 rosbridge `/puppy_control/emergency_stop` 으로 로봇 전체 latch 도 건다. 그 뒤 ACK 에 latch 가 보이지 않으면(비상정지 패킷이 모두 유실) 요청을 지우지 않고 0.2 s 마다 다시 보낸다. 비상정지 요청은 사용자의 해제로만 풀린다. 긴 진동 0.6 s. **해제**는 터치 전용으로 1 초 길게 눌러야 하며, rosbridge `reset_estop` 완료 콜백 뒤에 v2 `clear_emergency` 를 보낸다(순서는 팀 로봇 문서 06 §3 의 latch 관계에 따름). 그 뒤 재프레스 규칙이 적용된다.
@@ -215,7 +227,7 @@ python3 tools/mock_robot.py &                     # UDP 5001/5002, TCP 8080/8090
 ./build/console --host 127.0.0.1 --script tests/it_avoid.txt   # 가짜 로봇을 새로 띄운 뒤
 ```
 
-- `tests/it_drive.txt`(expect 14개): 연결 → 중립 확인 → 주행 → 놓기 → go_home → 자세 → 동작 그룹 → 경로 전송(rotate→drive→done) → 스틱 개입으로 경로 취소 → 비상정지 → 해제 → 지도 저장/새로 → 토픽 목록 → RTT 수집. 실패가 있으면 종료 코드 1.
+- `tests/it_drive.txt`(expect 16개): 연결 → 중립 확인 → 주행 → 놓기 → go_home → 자세 → 동작 그룹 → 경로 전송(rotate→drive→done) → 스틱 개입으로 경로 취소 → 비상정지 → 비상정지 중 서기·동작이 나가지 않음 → 해제 → 지도 저장/새로 → 토픽 목록 → RTT 수집. 실패가 있으면 종료 코드 1.
 - `tests/it_avoid.txt`(expect 8개): 경로 위에 미리 놓인 장애물을 피해 도착하고, 가는 중에 경로 위에 생긴 장애물을 스캔으로 찾아 다시 계획해 도착한다. 두 경우 모두 가짜 로봇의 충돌 기록이 없어야 한다.
 - `tests/it_estop_loss.txt` + `tools/lossy_udp_proxy.py`: 앱과 가짜 로봇 사이에서 비상정지 UDP 처음 두 개를 버린다. 앱이 비상정지를 다시 보내 로봇이 latch 되어야 통과한다. 중계기는 다른 루프백 주소(리눅스 `127.0.0.2`)를 쓰므로, 맥에서는 다른 로컬 주소로 `--listen` 을 바꿔 돌린다.
 

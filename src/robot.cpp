@@ -367,10 +367,26 @@ void Robot::call(const std::string& service, const std::string& type, const Json
     });
 }
 
-void Robot::go_home() { call("/puppy_control/go_home", "std_srvs/Empty", Json::object(), "서기(go_home)"); }
+// 비상정지 중에는 몸을 움직이는 요청(서기·자세·동작·경로)을 보내지 않는다. 실기(2026-11-16)에서 로봇이 비상정지 중에도
+// 서기를 "완료"(1 s 넘게 걸림)로 받았다. 비상정지는 사용자가 해제할 때까지 앱이 지킨다
+bool Robot::estop_blocks(const std::string& what) {
+    bool blocked = v2_.snapshot().estop;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        blocked = blocked || robot_estop_requested_;
+    }
+    if (blocked) set_result(what + " 보내지 않음: 비상정지 중(먼저 해제)");
+    return blocked;
+}
+
+void Robot::go_home() {
+    if (estop_blocks("서기")) return;
+    call("/puppy_control/go_home", "std_srvs/Empty", Json::object(), "서기(go_home)");
+}
 
 void Robot::set_pose_custom(double roll, double pitch, double yaw, double height, double x_shift, double stance_x,
                             double stance_y, int run_time_ms) {
+    if (estop_blocks("자세")) return;
     Json m = Json::object();
     m.set("roll", roll).set("pitch", pitch).set("yaw", yaw).set("height", height).set("x_shift", x_shift);
     m.set("stance_x", stance_x).set("stance_y", stance_y).set("run_time", run_time_ms);
@@ -382,6 +398,7 @@ void Robot::set_pose_custom(double roll, double pitch, double yaw, double height
 }
 
 void Robot::set_pose(const std::string& preset_name) {
+    if (estop_blocks("자세")) return;
     for (const auto& p : pose_presets())
         if (preset_name == p.name) {
             set_pose_custom(p.roll, p.pitch, p.yaw, p.height, p.x_shift, p.stance_x, p.stance_y, 500);
@@ -392,6 +409,7 @@ void Robot::set_pose(const std::string& preset_name) {
 }
 
 void Robot::run_action(const std::string& name) {
+    if (estop_blocks("동작 " + name)) return;
     bool known = false;
     for (const auto& a : action_groups()) known = known || name == a.name;
     if (!known) {
@@ -528,6 +546,10 @@ PlanResult Robot::preview_plan(const std::vector<Pt>& waypoints) const {
 
 bool Robot::go_path(const std::vector<Pt>& waypoints, std::string* err) {
     std::lock_guard<std::mutex> send_lk(nav_send_mu_);  // nav 스레드가 옛 우회 경로를 이 경로 뒤에 보내지 않게
+    if (estop_blocks("경로")) {
+        if (err) *err = "비상정지 중";
+        return false;
+    }
     PlanResult r = preview_plan(waypoints);
     if (!r.ok) {
         if (err) *err = r.reason;

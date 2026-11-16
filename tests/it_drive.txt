@@ -18,6 +18,11 @@ drive 0.5 0 0.3
 expect path cancelled 3
 estop
 expect estop 1 2
+# 비상정지 중에는 서기·동작을 보내지 않는다
+home
+expect result 서기 보내지 않음 2
+action wave
+expect result 동작 wave 보내지 않음 2
 clear
 expect estop 0 3
 expect v2 idle 3
