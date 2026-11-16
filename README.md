@@ -4,11 +4,11 @@
 
 **ROG Ally X 를 Hiwonder PuppyPi 전용 핸드헬드 리모컨으로 쓰는 C++ 클라이언트 앱.** 스틱·트리거로 데드맨 주행을 하고, 손가락으로 LiDAR 지도에 길을 그리면 앱이 장애물을 피하는 경로로 바꿔 보낸다. 카메라와 LiDAR 레이더는 120 Hz 터치 화면에 띄운다. 로봇 소프트웨어는 한 줄도 바꾸지 않는다.
 
-> **English summary.** A Win32 + Direct3D 11 + Dear ImGui 1.93.0 client for a Hiwonder PuppyPi running a team-written ROS 2 stack, built for the ASUS ROG Ally X handheld ("heukgalli", the author's black Ally X on Windows 11). It speaks only the robot's published network interfaces (UDP Protocol v2, rosbridge WebSocket, HTTP MJPEG/JSON); no Hiwonder or team code is included and the robot software is unchanged. Single static exe built with MinGW-w64 (GCC 16.2 on the Ally, cross-compiled on macOS and in CI). The map screen renders the robot's LiDAR occupancy grid (`/map`) with live scans and plans around obstacles on the app side (A* with robot-size inflation, re-planning when the live scan blocks the path), because the robot itself has no obstacle avoidance. Core unit tests (99 checks) pass on macOS, on the Ally and in GitHub Actions (Ubuntu 24.04); every push also runs the mock-robot integration scripts (drive: 14 expects, obstacle avoidance: 8 expects, emergency stop with the first two stop packets dropped) and a Windows cross build. **Status: runs on the Ally; not yet tested with the real robot.** Hardware testing is tracked in `docs/HW_TEST_CHECKLIST.md`.
+> **English summary.** A Win32 + Direct3D 11 + Dear ImGui 1.93.0 client for a Hiwonder PuppyPi running a team-written ROS 2 stack, built for the ASUS ROG Ally X handheld ("heukgalli", the author's black Ally X on Windows 11). It speaks only the robot's published network interfaces (UDP Protocol v2, rosbridge WebSocket, HTTP MJPEG/JSON); no Hiwonder or team code is included and the robot software is unchanged. Single static exe built with MinGW-w64 (GCC 16.2 on the Ally, cross-compiled on macOS and in CI). The map screen renders the robot's LiDAR occupancy grid (`/map`) with live scans and plans around obstacles on the app side (A* with robot-size inflation, re-planning when the live scan blocks the path), because the robot itself has no obstacle avoidance. Core unit tests (99 checks) pass on macOS, on the Ally and in GitHub Actions (Ubuntu 24.04); every push also runs the mock-robot integration scripts (drive: 14 expects, obstacle avoidance: 8 expects, emergency stop with the first two stop packets dropped) and a Windows cross build. **Status: first real-robot session on 2026-11-16** — connection, driving, poses and actions, a 4.9 m path with an app-planned detour, live re-planning around a new obstacle and a 1.1 m path to arrival all show up in the app log; median ACK RTT about 11 ms over Wi-Fi, camera 11–15 fps. Emergency stop, focus loss and Wi-Fi loss on the real robot are still to be checked (`docs/HW_TEST_CHECKLIST.md`).
 
 ---
 
-## 현재 상태 (2026-11-15)
+## 현재 상태 (2026-11-16)
 
 | 항목 | 상태 |
 |---|---|
@@ -18,7 +18,7 @@
 | Windows exe | 맥 교차 빌드, GitHub Actions 교차 빌드, 흑갈리 자체 빌드(`build.ps1`) 모두 성공, 경고 0. 아이콘·매니페스트 포함 |
 | 흑갈리에서 실행 | **확인함(가짜 로봇에 연결).** 다섯 화면 표시, 내장 패드(XInput) 인식, 화면 120 fps(2026-11-14, 전원 상태 미기록)·배터리에서 93–116 fps(2026-11-15), 프레임당 CPU 평균 0.6–1.2 ms([측정 기록](docs/MEASUREMENTS.md)). 진동·터치 스케치·기울기는 아직 사람이 확인하지 않았다 |
 | 배포 | [v0.1.0](https://github.com/Ksyear/puppypi_heukgalli/releases/tag/v0.1.0) 사전 릴리스(2026-11-14, Windows x64 zip). 앱 아이콘은 다음 릴리스부터 들어간다 |
-| 실제 로봇 시험 | **아직 안 함.** 사용자가 [`docs/HW_TEST_CHECKLIST.md`](docs/HW_TEST_CHECKLIST.md) 로 수행한다 |
+| 실제 로봇 시험 | **2026-11-16 첫 시험.** 앱 로그 기준으로 연결, RT 주행, 자세·동작, 앱이 장애물을 돌아가게 짠 4.9 m 경로(12점) 주행, 가는 중 새 장애물에 두 번 재계획, 1.1 m 경로 도착을 확인했다. 실제 Wi-Fi ACK RTT 중앙값 약 11 ms. 비상정지·포커스·Wi-Fi 끊김 등 나머지는 [`docs/HW_TEST_CHECKLIST.md`](docs/HW_TEST_CHECKLIST.md) 로 계속한다 |
 
 가짜 로봇 시험 통과는 실기 검증이 아니다. 아래의 "동작한다" 는 서술은 모두 코드와 가짜 로봇 기준이다.
 
@@ -228,19 +228,19 @@ python3 tools/mock_robot.py &                     # UDP 5001/5002, TCP 8080/8090
 | ACK RTT (명령 송신 → ACK 수신, 한 기기 단조 시계) | 중앙값 **0.39 ms**, p95 **0.72 ms**, n = 61 | **macOS 루프백(127.0.0.1) + `tools/mock_robot.py`**, `it_drive.txt` 의 `rtt 3`. 실제 로봇도, Wi-Fi 도 아니다. 네트워크·로봇 처리 지연을 전혀 포함하지 않는다 |
 | ACK RTT, 흑갈리 → Mac 의 가짜 로봇 (Tailscale) | 중앙값 **17.87 ms**, p95 **20.96 ms**, n = 399 | 흑갈리 앱 로그 화면 값(2026-11-14). 같은 집 안 두 기기 사이 Tailscale 경로이며 로봇 처리도, 로봇 Wi-Fi 도 아니다 |
 | 화면 갱신, JPEG 풀기, 프레임 나이 (흑갈리) | 120 fps, 0.8 ms, 51 ms | 같은 조건. 카메라는 가짜 로봇의 320×240 영상이라 실제 1280×720 카메라와 다르다 |
-| 실제 Wi-Fi ACK RTT (흑갈리 ↔ PuppyPi) | **미측정** | 실기 점검표 2번 이후 `docs/MEASUREMENTS.md` 에 기록 예정 |
-| 카메라 수신 fps, 프레임 나이 | **미측정** | 로그 화면에 표시되지만 실기에서 읽은 값 없음 |
+| 실제 Wi-Fi ACK RTT (흑갈리 ↔ PuppyPi) | 5 s 구간 중앙값 **9.2–33.0 ms**(중앙값들의 중앙값 11.1 ms), 구간 p95 17.7–163.7 ms, 표본 3,081, 유실 1 % 이하 | 2026-11-16, 같은 공유기 Wi-Fi, 경로 주행·회피 중 약 2분 40초. 거리·전원 상태 미기록 |
+| 카메라 수신 fps, 프레임 나이 | **11.0–15.5 fps**, 16–176 ms | 같은 실행, 실제 카메라 |
 | 회피 반응 거리 | **미측정** | 실기 점검표 26번 |
 
 스틱 입력 → 로봇 다리 움직임까지의 종단 지연은 로봇 시계와의 동기화 근거가 없어 측정 대상에서 뺐다. 앱이 보여 주는 RTT 는 흑갈리 한 기기의 시계로 잰 왕복 시간이다. 앱은 5 초마다 `app_log.txt` 에 `perf` 한 줄(CPU·fps, 그 5 초 동안의 RTT 중앙값·p95·표본 수, 유실, 카메라 fps·프레임 나이)을 남기며, 실기 수치는 이 줄에서 뽑는다. 날짜별 원 기록은 [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
 
 ## 한계와 범위 밖
 
-- **실제 로봇과는 아직 연결하지 않았다.** 흑갈리에서 D3D11·한글 글꼴·내장 패드 인식은 확인했지만, 진동·터치 스케치·기울기 센서와 실제 로봇 동작은 점검표 결과를 기다린다.
+- **실제 로봇 시험은 한 번(2026-11-16) 했다.** 주행·자세·동작·경로·재계획은 앱 로그로 확인했지만, 비상정지·포커스 상실·Wi-Fi 끊김·기울기·30 분 사용은 아직이다. 앞선 실행에서 한 번 연결이 통째로 끊겼고(원인 미확인), 다시 켠 뒤에는 끊기지 않았다.
 - 가짜 로봇은 팀 모듈을 쓰더라도 시뮬레이션이다. ACK 지연, 경로 운동학, 두 비상정지 latch(v2·rosbridge)의 해제 순서는 실기에서 확인해야 한다(점검표 13번).
 - 인증·암호화 없음. 로봇 인터페이스가 평문 LAN 전제이므로 같은 Wi-Fi 안에서만 쓴다.
 - 로봇은 경로 추종 중 장애물을 피하지 않는다. 회피는 앱이 맡는다: LiDAR 스캔·지도로 막힘을 판단하고 경로를 취소한 뒤 다시 보낸다. 판단 지연(스캔 4번 중 3번, 약 0.3~0.4 s)과 Wi-Fi 지연 동안 로봇은 계속 움직이므로, 아주 가까이에서 갑자기 나타난 장애물은 피하지 못할 수 있다. 앞쪽 1.6 m 안만 감시한다. 실기 검증 전.
-- 지도 PNG 압축(`compression:"png"`)을 로봇 rosbridge 가 지원하지 않으면 8 초 뒤 일반 JSON(약 1.4 MB / 2 s)으로 바꾼다. 실기에서 어느 쪽인지 로그 화면 "지도" 줄에 표시된다.
+- 지도 PNG 압축(`compression:"png"`)을 로봇 rosbridge 가 지원하지 않으면 8 초 뒤 일반 JSON(가짜 로봇 기준 약 1.4 MB / 2 s)으로 바꾼다. 실제 로봇(2026-11-16)은 PNG 압축 지도를 보내지 않아 JSON 으로 받았다.
 - ImGui 터치는 단일 터치 드래그만. 핀치 확대 없음(−/+ 버튼).
 - Armoury Crate 가 패드를 데스크톱(마우스/키보드) 모드로 두면 XInput 입력이 없다. M1/M2 뒷버튼 미매핑.
 - 가속도계는 Windows Sensor API 에 노출되지 않을 수 있다. 그 경우 설정에 "가속도계 없음" 으로 뜨고 기능은 꺼진다.
