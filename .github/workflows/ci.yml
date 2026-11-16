@@ -34,7 +34,7 @@ jobs:
         run: |
           python tools/mock_robot.py --host 127.0.0.1 > mock_drive.log 2>&1 &
           MP=$!; sleep 3
-          ./build/console --host 127.0.0.1 --script tests/it_drive.txt; rc=$?
+          ./build/console --host 127.0.0.1 --script tests/it_drive.txt && rc=0 || rc=$?   # bash -e 에서도 정리 단계까지 가게
           kill $MP; wait $MP || true   # 포트를 놓을 때까지 기다린다(다음 단계가 같은 포트를 쓴다)
           exit $rc
       - name: Integration — LiDAR map and obstacle avoidance
@@ -43,9 +43,22 @@ jobs:
         run: |
           python tools/mock_robot.py --host 127.0.0.1 > mock_avoid.log 2>&1 &
           MP=$!; sleep 3
-          ./build/console --host 127.0.0.1 --script tests/it_avoid.txt; rc=$?
+          ./build/console --host 127.0.0.1 --script tests/it_avoid.txt && rc=0 || rc=$?
           kill $MP; wait $MP || true
           exit $rc
+      - name: Integration — emergency stop survives lost packets
+        env:
+          PUPPYPI_ROBOT_SRC: ${{ github.workspace }}/robot/ros2_ws/src/puppy_vr_bridge
+        run: |
+          python tools/mock_robot.py --host 127.0.0.1 > mock_estop.log 2>&1 &
+          MP=$!; sleep 3
+          # 앱 → 로봇 사이에서 비상정지 UDP 처음 두 개를 버린다. 앱이 다시 보내 로봇이 latch 되어야 통과
+          python tools/lossy_udp_proxy.py --listen 127.0.0.2 --seconds 12 &
+          PP=$!; sleep 1
+          ./build/console --host 127.0.0.2 --script tests/it_estop_loss.txt && rc=0 || rc=$?
+          wait $PP && prc=0 || prc=$?
+          kill $MP; wait $MP || true
+          [ "$rc" -eq 0 ] && [ "$prc" -eq 0 ]
       - name: Mock logs on failure
         if: failure()
         run: tail -n 80 mock_*.log || true

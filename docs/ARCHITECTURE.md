@@ -29,7 +29,7 @@ flowchart LR
   robot --> v2 & rb & net & lidar & plan
   plan --> lidar
   cli["cli/console<br/>텍스트 클라이언트·통합 시험"] --> robot
-  tests["tests/test_core<br/>단위 시험 95개"] --> core
+  tests["tests/test_core<br/>단위 시험 99개"] --> core
 ```
 
 | 파일 | 하는 일 |
@@ -110,7 +110,8 @@ sequenceDiagram
 
 ## 6. 시험의 경계
 
-- 단위 시험(`tests/test_core.cpp`, 95개): 파서, `decide_drive()`, 경로 단순화, 지도 좌표, LiDAR 해석, 계획기(우회·틈·막힘·지도 기반·감시 범위·막힘 판정·남은 경유점).
+- 단위 시험(`tests/test_core.cpp`, 99개): 파서, `decide_drive()`, 경로 단순화, 지도 좌표, LiDAR 해석, 계획기(우회·틈·막힘·지도 기반·감시 범위·막힘 판정·남은 경유점·벽에 붙은 출발).
+- 비상정지 유실 시험(`tests/it_estop_loss.txt`, `tools/lossy_udp_proxy.py`): 비상정지 UDP 두 개를 버려도 앱이 다시 보내 로봇이 latch 되는지.
 - 통합 시험(`tests/it_*.txt`, 콘솔 클라이언트 + `tools/mock_robot.py`): 가짜 로봇은 로봇 저장소의 프로토콜 모듈을 실행 시 불러와 규칙의 기준으로 쓰고, 방·상자·동적 장애물을 광선 투사로 흉내 낸다. 가짜 로봇 자체도 `tools/test_mock_robot.py`(12개)로 시험한다.
 - CI(`.github/workflows/ci.yml`): 푸시·PR 마다 Ubuntu 24.04 에서 위 세 가지를 돌리고 Windows exe 를 교차 빌드한다.
 - 가짜 로봇 통과는 실기 검증이 아니다. 실기는 `docs/HW_TEST_CHECKLIST.md`.

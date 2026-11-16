@@ -110,12 +110,22 @@ float CostGrid::clearance(const Pt& p) const {
 bool CostGrid::segment_free(const Pt& a, const Pt& b, double ignore_near, const Pt* near) const {
     double len = dist(a, b);
     int steps = std::max(1, static_cast<int>(std::ceil(len / (res_ * 0.5))));
+    int nx = -1, ny = -1;
+    float near_clear = 0;
+    if (near && to_cell(*near, nx, ny)) near_clear = clearance_at(nx, ny);
     for (int i = 0; i <= steps; ++i) {
         double t = static_cast<double>(i) / steps;
         Pt p{a.first + (b.first - a.first) * t, a.second + (b.second - a.second) * t};
-        if (near && dist(p, *near) < ignore_near) continue;  // 출발점 주변(이미 벽 옆에 서 있는 경우)은 봐준다
         int x, y;
-        if (!to_cell(p, x, y) || blocked(x, y)) return false;
+        if (!to_cell(p, x, y)) return false;
+        if (near && dist(p, *near) < ignore_near) {
+            // 출발점 주변(이미 벽 옆에 서 있는 경우)은 막힘을 봐준다. 단, 지금 자리보다 장애물에 가까워지거나
+            // 장애물 칸에 들어가면 벽을 뚫고 가는 선이다(벽에 0.10 m 붙어 출발하면 직선이 벽을 통과했다)
+            bool own = x == nx && y == ny;
+            if (!own && (obstacle(x, y) || clearance_at(x, y) + 1e-4f < near_clear)) return false;
+            continue;
+        }
+        if (blocked(x, y)) return false;
     }
     return true;
 }
@@ -143,12 +153,17 @@ static bool astar(const CostGrid& g, int sx, int sy, int gx, int gy, std::vector
         if (cur == goal) break;
         int cx = cur % w, cy = cur / w;
         bool cur_blocked = g.blocked(cx, cy);
+        float cur_clear = g.clearance_at(cx, cy);
         for (int k = 0; k < 8; ++k) {
             int nx = cx + dx[k], ny = cy + dy[k];
-            if (!g.inside(nx, ny)) continue;
-            // 막힌 칸 안에서 시작했으면 막힌 칸끼리 이동은 허용(밖으로 빠져나오기), 빈 칸에서 막힌 칸으로는 못 들어감
-            if (g.blocked(nx, ny) && !(cur_blocked && g.blocked(cx, cy))) continue;
-            if (k >= 4 && (g.blocked(cx + dx[k], cy) || g.blocked(cx, cy + dy[k])) && !cur_blocked) continue;  // 모서리 끼기 금지
+            if (!g.inside(nx, ny) || g.obstacle(nx, ny)) continue;  // 장애물 칸 자체에는 절대 들어가지 않는다
+            // 막힌 칸 안에서 시작했을 때만 막힌 칸으로 움직일 수 있다(빠져나오기). 그때도 장애물에서 멀어지거나
+            // 같은 거리로만 가서, 벽 쪽으로 파고들어 반대편으로 나가는 길을 만들지 않는다
+            if (g.blocked(nx, ny) && (!cur_blocked || g.clearance_at(nx, ny) + 1e-4f < cur_clear)) continue;
+            if (k >= 4) {
+                if (g.obstacle(cx + dx[k], cy) || g.obstacle(cx, cy + dy[k])) continue;  // 장애물 모서리 사이 대각선 금지
+                if (!cur_blocked && (g.blocked(cx + dx[k], cy) || g.blocked(cx, cy + dy[k]))) continue;  // 모서리 끼기 금지
+            }
             int ni = idx(nx, ny);
             float c = cost[cur] + (k < 4 ? 1.0f : 1.41421356f) * g.step_cost(nx, ny);
             if (c < cost[ni]) {

@@ -39,6 +39,10 @@ public:
     bool to_cell(const Pt& p, int& x, int& y) const;
     Pt to_world(int x, int y) const;
     float clearance(const Pt& p) const;            // 가장 가까운 장애물까지 거리(m), 범위 밖이면 0
+    float clearance_at(int x, int y) const { return inside(x, y) ? dist_[static_cast<size_t>(y) * w_ + x] : 0.0f; }
+    bool obstacle(int x, int y) const { return clearance_at(x, y) <= 0.0f; }  // 장애물 칸 자체(또는 범위 밖)
+    // a→b 가 막힘 없이 지나가는가. near 에서 ignore_near 안은 막힘을 봐주되(벽 옆에서 출발),
+    // 그 안에서도 near 보다 장애물에 가까워지거나 장애물 칸에 들어가면 막힘이다
     bool segment_free(const Pt& a, const Pt& b, double ignore_near = 0, const Pt* near = nullptr) const;
     int width() const { return w_; }
     int height() const { return h_; }

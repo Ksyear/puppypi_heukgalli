@@ -178,7 +178,8 @@ private:
     double nav_own_cancel_until_ = 0, nav_last_scan_ = 0;
     BlockTrigger nav_trigger_;
     std::vector<std::pair<Pt, double>> nav_temp_;  // (점, 만료 시각)
-    bool nav_pending_send_ = false;
+    uint64_t nav_gen_ = 0;    // 회피 주행 세대: 새 경로·멈춤마다 1 증가. nav 스레드는 세대가 같을 때만 결과를 쓰고 보낸다
+    std::mutex nav_send_mu_;  // nav 스레드의 "보낼지 판단 + path 송신"과 사용자 멈춤·새 경로를 한 줄로 세운다
     std::vector<Pt> nav_pending_path_;
     double nav_pending_since_ = 0;
 };

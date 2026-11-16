@@ -168,12 +168,13 @@ static int run_line(Robot& r, const std::string& raw) {
                         xs[std::min(xs.size() - 1, xs.size() * 95 / 100)], xs.back());
         }
     } else if (c == "expect" && a.size() >= 3) {
-        // expect <무엇> <기대값 여러 단어 가능> [초]: 마지막 토큰이 숫자면 시간 제한
+        // expect <무엇> <기대값 여러 단어 가능> [초]: 마지막 토큰이 숫자면 시간 제한. map 은 기대값이 없다(expect map [초])
         double tmo = 3.0;
         size_t last = a.size();
         char* end = nullptr;
         double v = std::strtod(a.back().c_str(), &end);
-        if (a.size() >= 4 && end && *end == '\0') {
+        size_t min_tokens = a[1] == "map" ? 3 : 4;
+        if (a.size() >= min_tokens && end && *end == '\0') {
             tmo = v;
             --last;
         }
@@ -184,7 +185,11 @@ static int run_line(Robot& r, const std::string& raw) {
         if (what == "v2") ok = wait_for([&] { return r.v2().snapshot().state == want; }, tmo);
         else if (what == "path") ok = wait_for([&] { return r.snapshot().path.state == want; }, tmo);
         else if (what == "estop") ok = wait_for([&] { return r.snapshot().v2.estop == (want == "1"); }, tmo);
-        else if (what == "result") ok = wait_for([&] { return r.snapshot().last_result.find(want) != std::string::npos; }, tmo);
+        else if (what == "result")  // "서기 실패 …" 에도 '서기' 가 들어 있으므로 실패 문구는 통과시키지 않는다
+            ok = wait_for([&] {
+                std::string res = r.snapshot().last_result;
+                return res.find(want) != std::string::npos && res.find("실패") == std::string::npos;
+            }, tmo);
         else if (what == "nav") ok = wait_for([&] { return r.snapshot().nav.phase == want; }, tmo);
         else if (what == "replans") ok = wait_for([&] { return r.snapshot().nav.replans >= std::atoi(want.c_str()); }, tmo);
         else if (what == "map") ok = wait_for([&] { return r.snapshot().grid != nullptr; }, tmo);

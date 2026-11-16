@@ -4,7 +4,7 @@
 
 **ROG Ally X 를 Hiwonder PuppyPi 전용 핸드헬드 리모컨으로 쓰는 C++ 클라이언트 앱.** 스틱·트리거로 데드맨 주행을 하고, 손가락으로 LiDAR 지도에 길을 그리면 앱이 장애물을 피하는 경로로 바꿔 보낸다. 카메라와 LiDAR 레이더는 120 Hz 터치 화면에 띄운다. 로봇 소프트웨어는 한 줄도 바꾸지 않는다.
 
-> **English summary.** A Win32 + Direct3D 11 + Dear ImGui 1.93.0 client for a Hiwonder PuppyPi running a team-written ROS 2 stack, built for the ASUS ROG Ally X handheld ("heukgalli", the author's black Ally X on Windows 11). It speaks only the robot's published network interfaces (UDP Protocol v2, rosbridge WebSocket, HTTP MJPEG/JSON); no Hiwonder or team code is included and the robot software is unchanged. Single static exe built with MinGW-w64 (GCC 16.2 on the Ally, cross-compiled on macOS and in CI). The map screen renders the robot's LiDAR occupancy grid (`/map`) with live scans and plans around obstacles on the app side (A* with robot-size inflation, re-planning when the live scan blocks the path), because the robot itself has no obstacle avoidance. Core unit tests (95 checks) pass on macOS, on the Ally and in GitHub Actions (Ubuntu 24.04); every push also runs the mock-robot integration scripts (drive: 14 expects, obstacle avoidance: 8 expects) and a Windows cross build. **Status: runs on the Ally; not yet tested with the real robot.** Hardware testing is tracked in `docs/HW_TEST_CHECKLIST.md`.
+> **English summary.** A Win32 + Direct3D 11 + Dear ImGui 1.93.0 client for a Hiwonder PuppyPi running a team-written ROS 2 stack, built for the ASUS ROG Ally X handheld ("heukgalli", the author's black Ally X on Windows 11). It speaks only the robot's published network interfaces (UDP Protocol v2, rosbridge WebSocket, HTTP MJPEG/JSON); no Hiwonder or team code is included and the robot software is unchanged. Single static exe built with MinGW-w64 (GCC 16.2 on the Ally, cross-compiled on macOS and in CI). The map screen renders the robot's LiDAR occupancy grid (`/map`) with live scans and plans around obstacles on the app side (A* with robot-size inflation, re-planning when the live scan blocks the path), because the robot itself has no obstacle avoidance. Core unit tests (99 checks) pass on macOS, on the Ally and in GitHub Actions (Ubuntu 24.04); every push also runs the mock-robot integration scripts (drive: 14 expects, obstacle avoidance: 8 expects, emergency stop with the first two stop packets dropped) and a Windows cross build. **Status: runs on the Ally; not yet tested with the real robot.** Hardware testing is tracked in `docs/HW_TEST_CHECKLIST.md`.
 
 ---
 
@@ -12,8 +12,8 @@
 
 | 항목 | 상태 |
 |---|---|
-| 코어 단위 시험 | 95개 통과. macOS clang, 흑갈리 MinGW GCC 16.2(2026-11-15 다시 확인), GitHub Actions Ubuntu 24.04(푸시마다) |
-| 가짜 로봇 통합 시험 | 주행 `tests/it_drive.txt`(expect 14개)와 장애물 회피 `tests/it_avoid.txt`(expect 8개) 모두 통과. 맥 루프백, GitHub Actions(푸시마다) |
+| 코어 단위 시험 | 99개 통과. macOS clang, 흑갈리 MinGW GCC 16.2(2026-11-16 다시 확인), GitHub Actions Ubuntu 24.04(푸시마다) |
+| 가짜 로봇 통합 시험 | 주행 `tests/it_drive.txt`(expect 14개), 장애물 회피 `tests/it_avoid.txt`(expect 8개), 비상정지 유실 `tests/it_estop_loss.txt` 모두 통과. 맥, GitHub Actions(푸시마다) |
 | 흑갈리 → 맥 가짜 로봇 (Tailscale) | `it_drive` 통과. `it_avoid` 는 Tailscale 이 중계(DERP)로 바뀐 때 UDP 유실 25–56 % 로 로봇 watchdog(0.4 s)이 경로를 취소해 3개 실패했다. 설계대로 멈춘 것이며 실제 LAN 에서 다시 확인해야 한다 |
 | Windows exe | 맥 교차 빌드, GitHub Actions 교차 빌드, 흑갈리 자체 빌드(`build.ps1`) 모두 성공, 경고 0. 아이콘·매니페스트 포함 |
 | 흑갈리에서 실행 | **확인함(가짜 로봇에 연결).** 다섯 화면 표시, 내장 패드(XInput) 인식, 화면 120 fps(2026-11-14, 전원 상태 미기록)·배터리에서 93–116 fps(2026-11-15), 프레임당 CPU 평균 0.6–1.2 ms([측정 기록](docs/MEASUREMENTS.md)). 진동·터치 스케치·기울기는 아직 사람이 확인하지 않았다 |
@@ -142,13 +142,13 @@ M1/M2 뒷면 버튼은 Armoury Crate 설정에 따라 XInput 으로 보이지 �
 
 1. **데드맨**: RT ≥ 50 %(또는 RB 기울임, `--kbdrive` 의 Shift)를 쥐고 있고 스틱이 0 이 아니다.
 2. **입력 신선도**: UI 스레드가 최근 **0.25 s** 안에 입력을 넘겼다. 화면이 멈추면 중립.
-3. **포커스**: 창이 활성(`WM_ACTIVATEAPP`), 최소화·가려짐(DXGI occluded) 아님, 연결·설정 화면 아님. 포커스를 잃는 순간 `set_drive(0,0,false)` 를 바로 호출한다.
+3. **포커스**: 창이 활성(`WM_ACTIVATEAPP`), 최소화·가려짐(DXGI occluded) 아님, 연결·설정 화면 아님. 포커스를 잃는 순간 `set_drive(0,0,false)` 를 바로 호출한다. 포커스가 없으면 멈추는 버튼(B, X) 말고는 패드 버튼도 받지 않는다(XInput 은 포커스와 상관없이 입력을 준다).
 4. **ACK 신선도**: 로봇 ACK 가 최근 **0.6 s** 안에 왔다. 로봇 쪽 watchdog(0.4 s)이 먼저 멈추고, 앱은 그 뒤 중립으로 돌아간다.
 5. **로봇 상태**: 마지막 ACK 의 `state` 가 `idle` 또는 `active`. `awaiting_neutral`·`timeout` 이면 중립을 보내며 확인을 기다리고, 로봇이 `idle` 을 돌려주면 자동 재개한다.
 6. **비상정지 없음**: 앱이 비상정지를 요청한 상태도, ACK 의 `emergency_stop` latch 도 아니다.
 7. **재프레스 규칙**: 비상정지 해제 직후에는 `release_required` 가 켜진다. 데드맨을 **한 번 놓아야** 풀리고, 놓기 전까지는 쥐고 있어도 움직이지 않는다.
 
-**비상정지(B 또는 빨간 버튼)** 는 v2 `emergency_stop` 을 두 번(번호를 올려) 보내고, 동시에 rosbridge `/puppy_control/emergency_stop` 으로 로봇 전체 latch 도 건다. 긴 진동 0.6 s. **해제**는 터치 전용으로 1 초 길게 눌러야 하며, rosbridge `reset_estop` 완료 콜백 뒤에 v2 `clear_emergency` 를 보낸다(순서는 팀 로봇 문서 06 §3 의 latch 관계에 따름). 그 뒤 재프레스 규칙이 적용된다.
+**비상정지(B 또는 빨간 버튼)** 는 v2 `emergency_stop` 을 두 번(번호를 올려) 보내고, 동시에 rosbridge `/puppy_control/emergency_stop` 으로 로봇 전체 latch 도 건다. 그 뒤 ACK 에 latch 가 보이지 않으면(비상정지 패킷이 모두 유실) 요청을 지우지 않고 0.2 s 마다 다시 보낸다. 비상정지 요청은 사용자의 해제로만 풀린다. 긴 진동 0.6 s. **해제**는 터치 전용으로 1 초 길게 눌러야 하며, rosbridge `reset_estop` 완료 콜백 뒤에 v2 `clear_emergency` 를 보낸다(순서는 팀 로봇 문서 06 §3 의 latch 관계에 따름). 그 뒤 재프레스 규칙이 적용된다.
 
 **로봇 쪽 뒷받침**: 단일 조종자(UUID + 주소, lease 1.0 s), watchdog 0.4 s, 활성 명령 전 중립 확인, 비상정지 latch 는 조종자만 해제, disconnect 한 UUID 재사용 불가. 앱이 죽거나 Wi-Fi 가 끊겨도 로봇은 0.4 s 안에 스스로 멈춘다. 앱 종료 시에는 중립 1회 + `disconnect` 를 보내 소유권을 즉시 반납하고 다음 연결은 새 UUID 를 쓴다.
 
@@ -192,18 +192,18 @@ make CROSS=x86_64-w64-mingw32- BUILD=build-win app   # Windows exe 교차 빌드
 
 ### CI
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 이 푸시·PR 마다 Ubuntu 24.04 에서 단위 시험 → 콘솔 빌드 → 가짜 로봇 자체 시험 → `it_drive` → `it_avoid` 를 돌리고, MinGW-w64 교차 빌드한 exe 를 아티팩트로 올린다.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 이 푸시·PR 마다 Ubuntu 24.04 에서 단위 시험 → 콘솔 빌드 → 가짜 로봇 자체 시험 → `it_drive` → `it_avoid` → 비상정지 유실 시험을 돌리고, MinGW-w64 교차 빌드한 exe 를 아티팩트로 올린다.
 
 ## 테스트
 
 ### 단위 시험 (`tests/test_core.cpp`, 외부 프레임워크 없음)
 
-`make test` → **95 checks pass** (macOS clang, 흑갈리 `.\build.ps1 test`, CI Ubuntu 24.04).
+`make test` → **99 checks pass** (macOS clang, 흑갈리 `.\build.ps1 test`, CI Ubuntu 24.04).
 
 - 프로토콜·안전: ACK 8필드 엄격 파싱, `decide_drive()` 전이 표(중립 확인·데드맨·입력 정지·ACK 끊김·비상정지·timeout 자동 재개·재프레스), 발견 응답 nonce/형식 검증
 - 파서·도구: JSON 왕복·깊이 제한·정수/실수 출력, `/api/map`·`/api/path`·`/scan` 파서, UUID/base64/문자열 도구
 - 지도: 지도 픽셀↔미터 변환, 점유 격자 빠른 해석, 쿼터니언→yaw, 스캔→지도 좌표, RDP 스케치 단순화(직선→2점, L→3점, 지그재그→≤20점)
-- 계획기: 직선 막힘 우회, 벽 틈 통과, 완전히 막힘 실패, 경유점이 장애물 안이면 실패, 점유 격자 지도 기반 우회, 앞쪽 감시 범위, 막힘 판정(4번 중 3번·쿨다운), 남은 경유점 계산
+- 계획기: 직선 막힘 우회, 벽 틈 통과, 완전히 막힘 실패, 경유점이 장애물 안이면 실패, 점유 격자 지도 기반 우회, 앞쪽 감시 범위, 막힘 판정(4번 중 3번·쿨다운), 남은 경유점 계산, 얇은 벽에 붙어 출발해도 벽을 뚫지 않음(0.05–0.15 m)
 
 ### 통합 시험 (가짜 로봇)
 
@@ -217,6 +217,7 @@ python3 tools/mock_robot.py &                     # UDP 5001/5002, TCP 8080/8090
 
 - `tests/it_drive.txt`(expect 14개): 연결 → 중립 확인 → 주행 → 놓기 → go_home → 자세 → 동작 그룹 → 경로 전송(rotate→drive→done) → 스틱 개입으로 경로 취소 → 비상정지 → 해제 → 지도 저장/새로 → 토픽 목록 → RTT 수집. 실패가 있으면 종료 코드 1.
 - `tests/it_avoid.txt`(expect 8개): 경로 위에 미리 놓인 장애물을 피해 도착하고, 가는 중에 경로 위에 생긴 장애물을 스캔으로 찾아 다시 계획해 도착한다. 두 경우 모두 가짜 로봇의 충돌 기록이 없어야 한다.
+- `tests/it_estop_loss.txt` + `tools/lossy_udp_proxy.py`: 앱과 가짜 로봇 사이에서 비상정지 UDP 처음 두 개를 버린다. 앱이 비상정지를 다시 보내 로봇이 latch 되어야 통과한다. 중계기는 다른 루프백 주소(리눅스 `127.0.0.2`)를 쓰므로, 맥에서는 다른 로컬 주소로 `--listen` 을 바꿔 돌린다.
 
 `tools/mock_robot.py` 는 Python 표준 라이브러리로 만든 **시험 보조 도구**다(앱 자체는 C++). 실행 시 `--robot-src`(또는 `PUPPYPI_ROBOT_SRC`)가 가리키는 [로봇 저장소](https://github.com/Ksyear/PuppyPI_Cpp_ROS2)의 프로토콜 모듈(`protocol_v2.py`, `path_follower.py`)을 import 해서 조종 규칙의 기준으로 쓴다. 로봇 코드는 이 저장소에 복사하지 않았다. `discovery.py` 가 없으면 문서의 응답 형식으로 대신한다. 방·상자·동적 장애물을 광선 투사로 흉내 내 `/scan`·`/map` 을 만든다. 자체 시험: `python3 tools/test_mock_robot.py`(12개).
 

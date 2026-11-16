@@ -184,6 +184,7 @@ void App::connect_to(const std::string& host) {
 void App::estop_all() {
     robot_.emergency_stop_all();
     pad_.rumble(Rumble::Long);
+    prev_estop_ = true;  // 다음 프레임 feedback() 이 같은 비상정지로 한 번 더 길게 진동하지 않게
 }
 
 void App::frame(double now) {
@@ -259,9 +260,15 @@ void App::handle_input(double now, const RobotSnapshot& s) {
     if (s.connected) robot_.v2().set_drive(forward, turn, held);
 
     if (!p.connected) return;
-    // 버튼(운전 중에는 몸을 움직이는 버튼을 무시)
+    // 버튼(운전 중에는 몸을 움직이는 버튼을 무시). 멈추는 버튼(B 비상정지, X 경로 멈춤)은 포커스와 상관없이 받는다
     if (p.hit(kB)) estop_all();
     if (p.hit(kX)) robot_.cancel_path();
+    // XInput 은 창 포커스와 상관없이 패드 상태를 준다. 다른 창·오버레이를 보는 중에 서기·자세·동작이 실행되지 않게 한다
+    if (!focus_) {
+        pose_publish_at_ = 0;
+        view_menu_hold_ = 0;
+        return;
+    }
     if (p.hit(kY)) hud_layer_ = (hud_layer_ + 1) % 3;
     if (p.hit(kA) && !held) robot_.go_home();
     if (p.hit(kLeftStick)) {

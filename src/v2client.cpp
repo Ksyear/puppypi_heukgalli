@@ -200,6 +200,7 @@ void V2Client::emergency_stop() {
     {
         std::lock_guard<std::mutex> lk(mu_);
         estop_requested_ = true;
+        estop_resends_ = 0;
         Json e = Json::object();
         e.set("protocol", 2).set("type", "emergency_stop").set("client_id", client_id_).set("sequence", next_sequence_locked());
         // UDP 한 개가 사라질 수 있으니 두 번 보낸다(두 번째는 번호를 올려 out_of_order 를 피함)
@@ -364,8 +365,20 @@ void V2Client::receiver_loop() {
                 state_event = "로봇 상태 " + ack.state + (ack.accepted ? "" : " · 거부 " + ack.reason) +
                               (ack.emergency_stop ? " · 비상정지 latch" : "");
             }
-            // 비상정지 뒤에 보낸 패킷의 ACK 인데 latch 가 없으면(해제됐거나 비상정지 패킷이 모두 유실) 요청 표시를 지운다
-            if (estop_requested_ && ack.sequence > estop_sequence_ && !ack.emergency_stop) estop_requested_ = false;
+            // 비상정지 뒤에 보낸 패킷의 ACK 인데 latch 가 없다: 비상정지 패킷이 모두 유실됐거나 로봇이 아직 받지 못했다.
+            // 요청을 지우면 해제하지 않았는데 다시 운전될 수 있으므로 지우지 않고(해제는 clear_emergency 만) 0.2 s 마다 다시 보낸다
+            if (estop_requested_ && ack.sequence > estop_sequence_ && !ack.emergency_stop) {
+                double t = now_s();
+                if (t - estop_resent_at_ >= 0.2) {
+                    estop_resent_at_ = t;
+                    estop_sequence_ = next_sequence_locked();
+                    Json e = Json::object();
+                    e.set("protocol", 2).set("type", "emergency_stop").set("client_id", client_id_).set("sequence", estop_sequence_);
+                    send_json_locked(e.dump());
+                    if (++estop_resends_ == 1)
+                        state_event += std::string(state_event.empty() ? "" : " · ") + "비상정지 latch 가 보이지 않아 비상정지를 다시 보냄";
+                }
+            }
         }
         if (!state_event.empty()) log(state_event);
     }

@@ -1,0 +1,5 @@
+# 비상정지 UDP 두 개가 모두 유실돼도(tools/lossy_udp_proxy.py 가 버림) 앱은 비상정지를 지우지 않고 다시 보낸다
+expect v2 idle 5
+estop
+wait 2
+expect estop 1 1

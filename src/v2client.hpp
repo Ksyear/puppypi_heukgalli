@@ -122,6 +122,8 @@ private:
     bool release_required_ = false;
     bool estop_requested_ = false;
     int64_t estop_sequence_ = -1;
+    double estop_resent_at_ = 0;  // latch 가 안 보여 비상정지를 다시 보낸 시각
+    int estop_resends_ = 0;
     // 마지막 ACK
     V2Ack last_ack_;
     bool have_ack_ = false;

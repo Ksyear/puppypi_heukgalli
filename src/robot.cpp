@@ -409,7 +409,12 @@ void Robot::reset_map() {
         std::lock_guard<std::mutex> lk(mu_);
         trail_.clear();  // 새 지도는 원점이 지금 위치로 바뀐다
     }
-    stop_nav("지도 새로 시작");
+    {
+        // 새 지도는 원점이 바뀌므로 옛 좌표의 경로를 로봇이 계속 따라가지 않게 취소한다
+        std::lock_guard<std::mutex> send_lk(nav_send_mu_);
+        stop_nav("지도 새로 시작");
+        if (v2_.cancel_path()) events_.add("경로 취소 전송(지도 새로)");
+    }
     call("/lidar_mapper/reset_map", "std_srvs/Trigger", Json::object(), "지도 새로 시작");
 }
 
@@ -469,6 +474,7 @@ bool Robot::send_path(const std::vector<Pt>& pts, std::string* err) {
 }
 
 void Robot::cancel_path() {
+    std::lock_guard<std::mutex> send_lk(nav_send_mu_);  // nav 스레드가 재계획 경로를 막 보내려던 참이면 그 뒤에 취소가 간다
     stop_nav("사용자 취소");
     if (v2_.cancel_path()) events_.add("경로 취소 전송");
 }
@@ -521,10 +527,12 @@ PlanResult Robot::preview_plan(const std::vector<Pt>& waypoints) const {
 }
 
 bool Robot::go_path(const std::vector<Pt>& waypoints, std::string* err) {
+    std::lock_guard<std::mutex> send_lk(nav_send_mu_);  // nav 스레드가 옛 우회 경로를 이 경로 뒤에 보내지 않게
     PlanResult r = preview_plan(waypoints);
     if (!r.ok) {
         if (err) *err = r.reason;
         std::lock_guard<std::mutex> lk(mu_);
+        ++nav_gen_;
         nav_ = NavStatus{};
         nav_.phase = "blocked";
         nav_.message = r.reason;
@@ -536,6 +544,7 @@ bool Robot::go_path(const std::vector<Pt>& waypoints, std::string* err) {
     events_.add(fmt("경로 전송 %zu점%s (sequence %lld, 길이 %.2f m)", r.path.size(), r.detoured ? ", 장애물 우회" : "",
                     static_cast<long long>(seq), polyline_length(r.path)));
     std::lock_guard<std::mutex> lk(mu_);
+    ++nav_gen_;
     nav_ = NavStatus{};
     nav_.phase = "following";
     nav_.message = r.detoured ? "장애물을 피해 가는 중" : "경로 따라가는 중";
@@ -555,7 +564,7 @@ void Robot::stop_nav(const std::string& why) {
         nav_.message = why;
         events_.add("회피 주행 끝: " + why);
     }
-    nav_pending_send_ = false;
+    ++nav_gen_;  // 계획 중이던 nav 스레드의 결과는 버려진다
 }
 
 // 10 Hz: 로봇 경로 상태를 따라가며, 남은 경로 앞 1.6 m 안에 장애물이 스캔 4번 중 3번 잡히면 취소 → 다시 계획 → 다시 보냄
@@ -569,6 +578,7 @@ void Robot::nav_loop() {
         std::vector<Pt> obs, planned, goals;
         std::vector<int> goal_at;
         int64_t seq;
+        uint64_t gen;
         std::string phase;
         bool new_scan;
         {
@@ -593,6 +603,7 @@ void Robot::nav_loop() {
                 if (nav_temp_[i].second <= now) nav_temp_.erase(nav_temp_.begin() + static_cast<long>(i));
                 else ++i;
             phase = nav_.phase;
+            gen = nav_gen_;
             if (phase != "following" && phase != "replanning") continue;
             s.path = path_;
             s.pose = pose_;
@@ -631,9 +642,12 @@ void Robot::nav_loop() {
         // 다시 계획한 경로를 보낼 차례: 로봇이 앞 경로 취소를 처리하고 중립(idle)이면 보낸다
         if (phase == "replanning") {
             bool robot_free = !(s.path.valid && (s.path.state == "rotate" || s.path.state == "drive") && s.path.request_sequence == seq);
+            // 사용자가 그사이 멈췄거나 새 경로를 보냈으면 보내지 않는다. 판단과 송신 사이에 멈춤이 끼어들지 못하게 묶는다
+            std::lock_guard<std::mutex> send_lk(nav_send_mu_);
             std::vector<Pt> next;
             {
                 std::lock_guard<std::mutex> lk(mu_);
+                if (nav_gen_ != gen || nav_.phase != "replanning") continue;
                 next = nav_pending_path_;
             }
             if (robot_free && v.state == "idle") {
@@ -679,6 +693,7 @@ void Robot::nav_loop() {
         }
         PlanResult r = plan_path(g.get(), obs, here, remaining, plan_config);
         std::lock_guard<std::mutex> lk(mu_);
+        if (nav_gen_ != gen || nav_.phase != "following") continue;  // 계획하는 동안 사용자가 멈췄거나 새 경로를 보냈다
         nav_trigger_.replanned(now);
         nav_.obstacles.clear();
         for (const auto& h : hits) nav_.obstacles.push_back(h);

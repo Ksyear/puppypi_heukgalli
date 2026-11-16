@@ -283,6 +283,25 @@ static void test_planner() {
     CHECK(remaining_goals(goals, at, 0).size() == 3);
     CHECK(remaining_goals(goals, at, 1).size() == 2 && remaining_goals(goals, at, 1)[0].first == 2);
     CHECK(remaining_goals(goals, at, 5).size() == 1 && remaining_goals(goals, at, 5)[0].first == 3);  // 끝 무렵
+    // 10) 얇은 벽(x=0, 길이 2 m)에 붙어 출발해도 벽을 뚫고 가지 않는다(전에는 0.10 m 안에서 직선이 벽을 통과했다)
+    obs.clear();
+    for (double y = -1.0; y <= 1.0001; y += 0.02) obs.push_back({0.0, y});
+    auto crosses_wall = [](const Pt& start, const std::vector<Pt>& path) {
+        Pt prev = start;
+        for (const auto& p : path) {
+            if ((prev.first < 0) != (p.first < 0)) {
+                double y = prev.second + (0 - prev.first) / (p.first - prev.first) * (p.second - prev.second);
+                if (y > -1.0 && y < 1.0) return true;
+            }
+            prev = p;
+        }
+        return false;
+    };
+    for (double d : {0.05, 0.09, 0.10, 0.15}) {
+        Pt s{-d, 0.0};
+        r = plan_path(nullptr, obs, s, {{0.6, 0.0}}, cfg);
+        CHECK(r.ok && !crosses_wall(s, r.path));
+    }
 }
 
 int main() {
